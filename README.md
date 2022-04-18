@@ -22,6 +22,12 @@ Considering the public health and ecological relevance of food provisioning of w
  1) How does the incorporation of grooming change host-ectoparasite dynamics. 
 
 ### Study design: 
+
+Table 1. Parameters in the rodent host–ectoparasite model.
+
+Figure 1. Compartmental Model. 
+
+
 #### Study 
 
 ### Analysis: 
