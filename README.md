@@ -24,8 +24,8 @@ Table 1. Model components
 | Parameter  | BD.Model.0 Value | BDI.Model.1 Value | BDI.Model.2 Value | BDI.Model.3 Value
 |:-:|:-:|:-:|:-:|:-:|
 | birth rate, $\lambda$  | 0.2 |  0.2 + Allee effect | 0.2 |  0.2 + Allee effect | 
-| death rate, $\mu$ | 0.1 + logistic growth | 0.1 + logistic growth | 0.1 + logistic growth * var(host density ~ carrying capacity) | 0.1 + logistic growth * var(host density ~ carrying capacity)
-| immigration rate, $iota$ | 0.1 |  0.1  | 0.1 + var(host density ~ immigration) |  0.1 + var(host density ~ immigration) 
+| death rate, $\mu$ | 0.1 + logistic growth | 0.1 + logistic growth | 0.1 + logistic growth * var(host density ~ carrying capacity) | 0.1 + logistic growth * var(host density ~ carrying capacity) | 
+| immigration rate, $iota$ | 0.1 |  0.1  | 0.1 + var(host density ~ immigration) |  0.1 + var(host density ~ immigration) |
 
 Each model represents the population of parasites on one host. Each simulation will be run for 100 time points. 
 
