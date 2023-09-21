@@ -39,11 +39,12 @@ _Host Population Infection Metrics_
 _Parasite Population Metrics_
 
 * Calculate infection metrics from parasite perspective (total population size, crowding)
-* How these values vary with Allee effect and host density changes 
+* How these values vary with Allee effect and host density changes
+* Calculate stability? 
 
 _Parasite Infrapopulation Distribution_
 
-* Calculate aggregation metrics (mean intensity:variance intensity, $k$, crowding, skew, Pareto fraction)
+* From the stationary distribution, calculate aggregation metrics (mean intensity:variance intensity, $k$, crowding, skew, Pareto fraction)
 * How these values relate to each other and vary with Allee effect and host density changes 
 
 ### Checklist: 
