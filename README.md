@@ -20,9 +20,9 @@ Individual hosts serve as island habitats for ectoparasites like fleas that expl
 
 We will examine how parasite Allee effect and host density impact parasite population invasion success and stationary distribution sizes through simulated birth-death-immigration models. 
 
-Table: Model components
+Table 1. Model components
 | Parameter  | BD.Model.0 Value | BDI.Model.1 Value | BDI.Model.2 Value | BDI.Model.3 Value
-|:-:|:-:|
+|:-:|:-:|:-:|:-:|:-:|
 | birth rate, $\lambda$  | 0.2 |  0.2 + Allee effect | 0.2 |  0.2 + Allee effect | 
 | death rate, $\mu$ | 0.1 + logistic growth | 0.1 + logistic growth | 0.1 + logistic growth * var(host density ~ carrying capacity) | 0.1 + logistic growth * var(host density ~ carrying capacity)
 | immigration rate, $iota$ | 0.1 |  0.1  | 0.1 + var(host density ~ immigration) |  0.1 + var(host density ~ immigration) 
