@@ -27,7 +27,7 @@ Table 1. Model components
 | death rate, $\mu$ | 0.1 + logistic growth | 0.1 + logistic growth | 0.1 + logistic growth  | 0.1 + logistic growth | 
 | Allee effect, $\theta$  | 0 | $\theta \in 1:K$ | 0 |  $\theta \in 1:K$ |
 | immigration rate, $\iota$ | 0 |  0  | $\iota \in \iota_{min}:\iota_{max}$ ) |   $\iota \in \iota_{min}:\iota_{max}$ |
-| carrying capacity, $K$ | K_{min} | K_{min} | $K \in K_{min}:K_{max}$ |  $K \in K_{min}:K_{max}$  |
+| carrying capacity, $K$ | $K_{min}$ | $K_{min}$ | $K \in K_{min}:K_{max}$ |  $K \in K_{min}:K_{max}$  |
 | grooming rate, $\zeta$ | 0 | 0 | $\zeta \in \zeta_{min}:\zeta_{max}$ | $\zeta \in \zeta_{min}:\zeta_{max}$ |
 
 Each model represents the population of parasites on one host. Each simulation will be run for 100 time points. 
@@ -40,7 +40,7 @@ N_{t+1}=N_{t} + (\lambda {N_t}/({\theta + N_t}))N_t + \iota {N_t} - \mu {N_t}
 \end{aligned}
 $$
 
-Apply this function with parameters from Table for each model. 
+Apply this function with parameters from Table for each model. Relationships of $\iota$, $K$, $\zeta$ will have linear or non-linear relationships with host density (as a proxy for provisioning) that need to be determined. 
 - Model 0. Birth-Death 
 - Model 1. Birth-Death-Allee
 - Model 2. Birth-Death-Immigration
