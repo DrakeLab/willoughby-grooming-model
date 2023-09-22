@@ -36,7 +36,7 @@ Let $N(t)$ denote the random variable for the total parasite population size $N$
 
 $$
 \begin{aligned}
-N_{t+1}=N_{t} + \frac{ \lambda N_t}{\theta + N_t}N_t + \iota {N_t} - \mu {N_t}
+N_{t+1}=N_{t} + \frac{ \lambda N_t}{\theta + N_t}N_t + \iota {N_t} - (\mu + \zeta){N_t}
 \end{aligned}
 $$
 
