@@ -18,16 +18,34 @@ Individual hosts serve as island habitats for ectoparasites like fleas that expl
 
 ### Study design:
 
-We will examine how parasite Allee effect and host density impact parasite population invasion success and stationary distribution sizes through simulated birth-death-immigration models. 
+We will examine how parasite Allee effect and host density impact parasite population invasion success and stationary distribution sizes through simulated birth-death models. 
 
 Table 1. Model components
 | Parameter  | BD.Model.0 Value | BDI.Model.1 Value | BDI.Model.2 Value | BDI.Model.3 Value
 |:-:|:-:|:-:|:-:|:-:|
-| birth rate, $\lambda$  | 0.2 |  0.2 + Allee effect | 0.2 |  0.2 + Allee effect | 
-| death rate, $\mu$ | 0.1 + logistic growth | 0.1 + logistic growth | 0.1 + logistic growth * var(host density ~ carrying capacity) | 0.1 + logistic growth * var(host density ~ carrying capacity) | 
-| immigration rate, $iota$ | 0.1 |  0.1  | 0.1 + var(host density ~ immigration) |  0.1 + var(host density ~ immigration) |
+| birth rate, $\lambda$  | 0.2 |  0.2 | 0.2 |  0.2 | 
+| death rate, $\mu$ | 0.1 + logistic growth | 0.1 + logistic growth | 0.1 + logistic growth  | 0.1 + logistic growth | 
+| Allee effect, $\theta$  | 0 | $\theta \in 1:K$ | 0 |  $\theta \in 1:K$ |
+| immigration rate, $\iota$ | 0 |  0  | $\iota \in \iota_{min}:\iota_{max}$ ) |   $\iota \in \iota_{min}:\iota_{max}$ |
+| carrying capacity, $K$ | K_{min} | K_{min} | $K \in K_{min}:K_{max}$ |  $K \in K_{min}:K_{max}$  |
+| grooming rate, $\zeta$ | 0 | 0 | $\zeta \in \zeta_{min}:\zeta_{max}$ | $\zeta \in \zeta_{min}:\zeta_{max}$ |
 
 Each model represents the population of parasites on one host. Each simulation will be run for 100 time points. 
+
+Let $N(t)$ denote the random variable for the total parasite population size $N$ at time $t$. 
+
+$$
+\begin{aligned}
+N_{t+1}=N_{t} + (\lambda {N_t}/({\theta + N_t}))N_t + \iota {N_t} - \mu {N_t}
+\end{aligned}
+$$
+
+Apply this function with parameters from Table for each model. 
+- Model 0. Birth-Death 
+- Model 1. Birth-Death-Allee
+- Model 2. Birth-Death-Immigration
+- Model 3. Birth-Death-Alleee-Immigration
+
 
 ### Analysis 
 
