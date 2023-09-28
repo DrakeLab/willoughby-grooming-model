@@ -24,19 +24,37 @@ Table 1. Model components
 | Parameter  | BD.Model.0 Value | BDI.Model.1 Value | BDI.Model.2 Value | BDI.Model.3 Value
 |:-:|:-:|:-:|:-:|:-:|
 | birth rate, $\lambda$  | 0.2 |  0.2 | 0.2 |  0.2 | 
-| death rate, $\mu$ | 0.1 + logistic growth | 0.1 + logistic growth | 0.1 + logistic growth  | 0.1 + logistic growth | 
+| death rate, $\mu$ | $d_{x}$ | $d_{x}$ | $d_{x}$   | $d_{x}$  | 
 | Allee effect, $\theta$  | 0 | $\theta \in 1:K$ | 0 |  $\theta \in 1:K$ |
 | immigration rate, $\iota$ | 0 |  0  | $\iota \in \iota_{min}:\iota_{max}$ ) |   $\iota \in \iota_{min}:\iota_{max}$ |
 | carrying capacity, $K$ | $K$ | $K$ | $K$ |  $K$  |
-| grooming rate, $\zeta$ | 0 | 0 | $\zeta \in \zeta_{min}:\zeta_{max}$ | $\zeta \in \zeta_{min}:\zeta_{max}$ |
+
+Table 2. Different mortality based on grooming scenarios 
+| Grooming Scenario |        Function        | Notes
+|:-----------------:|:----------------------:|:------------------------|
+| none | $d$(x) = 0 | only flea density dependence (need to find citations)
+| programmed  | $d$(x) = $d_{0}$ | static grooming rate
+| stimulus-driven |  $d$(x) = $d_{0}$ + $d_{1}x$ | positive linear relationship between grooming time and ectoparasite burden; may explore saturating function |
+| costly | $d$(x) =  | left skewed gaussian distribution |
+
 
 Each model represents the population of parasites on one host. Each simulation will be run until a quasi-stationary distribution is reached.  
 
-Let $N(t)$ denote the random variable for the total parasite population size $N$ at time $t$. In this model, time , $t$, is continuous, and the state space is discrete.  
+We describe a stochastic population undergoing a continuous-time, discrete-state Markov Chain process. 
+
+The birth rate will incorporate the Allee effect, $\theta$, and the mortality rate will incorporate density-dependence, . 
 
 $$
 \begin{aligned}
-N_{t+1}=N_{t} + \frac{ \lambda N_t}{\theta + N_t}N_t + \iota {N_t} - (\mu + \zeta){N_t}
+{\lambda_{x}} = b_{0} x \frac{x}{\theta + x}  \text{      and      } \mu_{x} = (d_{0} + d_{1}x)x 
+\end{aligned}
+$$
+
+Together with immigration, $\iota$, which is not impacted by flea density, the deterministic rate equation is: 
+
+$$
+\begin{aligned}
+\frac{dx}{dt} = b_{0} x \frac{x}{\theta + x}(t) - (d_{0} + d_{1}x)x(t) + \iota(t)
 \end{aligned}
 $$
 
