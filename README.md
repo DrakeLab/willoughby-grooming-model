@@ -1,7 +1,7 @@
 # PROTOCOL FOR: 
 # Modeling effects of host behavioral defenses and parasite Allee effects on ectoparasite aggregation 
 
-_Last updated: September 21, 2023_
+_Last updated: March 3, 2025_
 
 ## Authors: 
 
@@ -59,10 +59,38 @@ $$
 $$
 
 Apply this function with parameters from Table 1 for each model. Relationships of $\iota$, $K$, $\zeta$ will have linear or non-linear relationships with host density (as a proxy for provisioning) that need to be determined. 
-- Model 0. Birth-Death 
+- Basic Model (0). Birth-Death with density dependence 
+
+$$
+\begin{aligned}
+\frac{dx}{dt} = b_{0} x (t) - (d_{0} + d_{1}x)x(t) 
+\end{aligned}
+$$
+
+
 - Model 1. Birth-Death-Allee
+
+$$
+\begin{aligned}
+\frac{dx}{dt} = b_{0} x \frac{x}{\theta + x}(t) - (d_{0} + d_{1}x)x(t) 
+\end{aligned}
+$$
+
 - Model 2. Birth-Death-Immigration
+  
+$$
+\begin{aligned}
+\frac{dx}{dt} = b_{0}x(t) - (d_{0} + d_{1}x)x(t) + \iota(t)
+\end{aligned}
+$$
+  
 - Model 3. Birth-Death-Allee-Immigration
+
+$$
+\begin{aligned}
+\frac{dx}{dt} = b_{0}x(t) \frac{x}{\theta + x}(t) - (d_{0} + d_{1}x)x(t) + \iota(t)
+\end{aligned}
+$$
 
 ### Analysis 
 
