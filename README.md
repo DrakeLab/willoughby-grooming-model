@@ -68,7 +68,7 @@ $$
 $$
 
 
-- Model 1. Birth-Death-Allee
+- Allee Effect Model (1). Birth-Death-Allee
 
 $$
 \begin{aligned}
@@ -76,7 +76,7 @@ $$
 \end{aligned}
 $$
 
-- Model 2. Birth-Death-Immigration
+- Resource Model (2). Birth-Death-Immigration
   
 $$
 \begin{aligned}
@@ -84,7 +84,7 @@ $$
 \end{aligned}
 $$
   
-- Model 3. Birth-Death-Allee-Immigration
+- Complex Model (3). Birth-Death-Allee-Immigration
 
 $$
 \begin{aligned}
