@@ -1,0 +1,248 @@
+---
+title: "Grooming Scenarios"
+author: "Anna Willoughby"
+date: "2025-05-22"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyr)
+library(ggplot2)
+library(dplyr)
+```
+
+```{r single scenarios}
+# Define parasite density range
+x <- seq(0.01, 100, length.out = 1000)
+
+# Define grooming scenarios 
+
+## programmed to a certain number of fleas per day (G)
+death_programmed <-  function(x, G = 10) {
+  pmin(1, G / x)  # cap at 1 to avoid unrealistic death rates > 1
+} 
+
+## saturate to a % of fleas (e.g., stimulus driven) perG
+death_stimulus <- function(x, d0 = 0, dmax = 1, perG  = 0.75) {
+  k <- x * (1 - perG) / perG
+  d0 + (dmax * x) / (k + x)
+}
+
+## costly, stimulus driven to a certain point, but then there is a cost 
+death_costly <- function(x, max = 1, mu = 30, sigma = 20) {
+  max * exp(-((x - mu)^2) / (2 * sigma^2))
+}
+
+# Evaluate each function
+df <- data.frame(
+  x,
+  programmed = death_programmed(x),
+  stimulus = death_stimulus(x),
+  costly = death_costly(x)
+)
+
+
+df_long <- pivot_longer(df, -x, names_to = "grooming scenario", values_to = "mortality rate")
+
+# Plot
+ggplot(df_long, aes(x = x, y = `mortality rate`, color = `grooming scenario`)) +
+  geom_line(size = 1.2) +
+  facet_wrap(~factor(`grooming scenario`, levels = c("none", "programmed", "stimulus", "costly")))  +
+  labs(
+    x = "ectoparasite population size",
+    y = expression(mu)
+  ) +
+  theme_minimal() +
+  scale_color_brewer(palette = "Dark2") + 
+  theme(legend.position = "none")
+  
+```
+
+
+```{r continuous parameter space }
+# plot different grooming scenarios 
+
+
+# 1. Define parameter ranges
+x_vals <- seq(1, 100, length.out = 100)  # parasite population size 
+
+# 1.1  PROGRAMMED
+G_vals <- seq(1, 100, length.out = 100)   # grooming efficiency
+
+deathrate_prg <- function(x, G) {
+  pmin(1, G / x)  # cap at 1 to avoid unrealistic death rates > 1
+} 
+
+# 2. Create a grid of all combinations
+grid_prg <- expand.grid(
+  pop_size = x_vals,
+  G = G_vals
+)
+
+# 3. Define total groomed for each scenario
+grid_prg$mu_prg <- deathrate_prg(grid_prg$pop_size, grid_prg$G)
+grid_prg$total_groomed <- grid_prg$pop_size*grid_prg$mu_prg
+# 5. Plot programmed heatmap
+prgG_hm <- ggplot(grid_prg, aes(x = pop_size, y = G, fill = total_groomed)) +
+  geom_tile() +
+  scale_fill_viridis_c(option = "inferno", direction = -1) +
+  labs(
+    x = "ectoparasite population size",
+    y = "grooming threshold (G)",
+    fill = "fleas groomed per day"
+  ) +
+  theme_minimal()
+prgG_hm
+prgM_hm <- ggplot(grid_prg, aes(x = pop_size, y = G, fill = mu_prg)) +
+  geom_tile() +
+  scale_fill_viridis_c(option = "inferno", direction = -1) +
+  labs(
+    x = "ectoparasite population size",
+    y = "grooming threshold (G)",
+    fill = "mortality rate"
+  ) +
+  theme_minimal()
+prgM_hm
+
+
+# Stimulus-driven: can remove up to %perG per day 
+ 
+perG_vals <-  seq(0.01, 1, length.out = 100)
+
+death_stimulus <- function(x, d0, dmax, perG){
+  k <- x * (1 - perG) / perG
+  d0 + (dmax * x) / (k + x)
+} 
+
+grid_stim <- expand.grid(
+  pop_size = x_vals,
+  perG = perG_vals
+)
+  
+grid_stim$mu_stim <- death_stimulus(grid_stim$pop_size, 0,1, grid_stim$perG) 
+grid_stim$total_groomed <- grid_stim$pop_size*grid_stim$mu_stim
+
+stim_perG_hm <- ggplot(grid_stim, aes(x = pop_size, y = perG, fill = total_groomed)) +
+  geom_tile() +
+  scale_fill_viridis_c(option = "inferno", direction = -1) +
+  labs(
+    x = "ectoparasite population size",
+    y = "grooming threshold (%G)",
+    fill = "fleas groomed per day"
+  ) +
+  theme_minimal()
+
+stim_perG_hm
+stim_M_hm <- ggplot(grid_stim, aes(x = pop_size, y = perG, fill = mu_stim)) +
+  geom_tile() +
+  scale_fill_viridis_c(option = "inferno", direction = -1) +
+  labs(
+    x = "ectoparasite population size",
+    y = "grooming threshold (perG)",
+    fill = "mortality rate"
+  ) +
+  theme_minimal()
+stim_M_hm 
+
+# Costly: Gaussian 
+# vary the cost center 
+center_vals <- seq(0,100,length.out = 100)
+sigma = 10
+max = 1
+
+grid_cost <- expand.grid(
+  pop_size = x_vals,
+  center = center_vals
+)
+  
+## keeping sigma solid
+## costly, stimulus driven to a certain point, but then there is a cost 
+death_costly <- function(x, max, center, sigma) {
+  max * exp(-((x - center)^2) / (2 * sigma^2))
+}
+
+grid_cost$mu_cost <- death_costly(grid_cost$pop_size, 1, grid_cost$center, 10) 
+grid_cost$total_groomed <- grid_cost$pop_size*grid_cost$mu_cost
+
+cost_tg_hm <- ggplot(grid_cost, aes(x = pop_size, y = center, fill = total_groomed)) +
+  geom_tile() +
+  scale_fill_viridis_c(option = "inferno", direction = -1) +
+  labs(
+    x = "ectoparasite population size",
+    y = "pop at mortality max",
+    fill = "fleas groomed per day"
+  ) +
+  theme_minimal()
+cost_tg_hm
+
+cost_M_hm <- ggplot(grid_cost, aes(x = pop_size, y = center, fill = mu_cost)) +
+  geom_tile() +
+  scale_fill_viridis_c(option = "inferno", direction = -1) +
+  labs(
+    x = "ectoparasite population size",
+    y = "pop at mortality max",
+    fill = "mortality rate"
+  ) +
+  theme_minimal()
+cost_M_hm
+
+# 4. Reshape for plotting
+plot_data <- pivot_longer(grid, cols = c("programmed", "stimulus", "costly"),
+                          names_to = "scenario", values_to = "total_groomed")
+
+plot_data$scenario <- factor(plot_data$scenario,
+                             levels = c("programmed", "stimulus", "costly"))
+
+# 5. Plot faceted heatmap
+ggplot(plot_data, aes(x = pop_size, y = death_rate, fill = total_groomed)) +
+  geom_tile() +
+  scale_fill_viridis_c(option = "inferno", direction = -1) +
+  facet_wrap(~scenario) +
+  labs(
+    x = "ectoparasite population size",
+    y = "grooming threshold (G)",
+    fill = "fleas groomed per day"
+  ) +
+  theme_minimal()
+
+```
+```{r plot processes}
+
+theta_vals <- seq(0, 10, by = 1)
+iota_vals <- seq(0, 10, by = 1) 
+
+grid_processes <- expand.grid(
+  pop_size = x_vals,
+  theta = theta_vals,
+  iota  = iota_vals
+)
+
+birthrate <- function(x, b0, theta) b0*x*(x/(theta+x))
+
+grid_processes$birth_rate <-birthrate(grid_processes$pop_size, 0.27, grid_processes$theta)
+
+process_plot <- ggplot(grid_processes, aes(x = pop_size, y = theta, fill = birth_rate)) +
+  geom_tile() +
+  scale_fill_viridis_c(option = "inferno", direction = -1) +
+  labs(
+    x = "ectoparasite population size",
+    y = "theta",
+    fill = "birth_rate"
+  ) +
+  theme_minimal()
+process_plot
+
+iota_plot <- ggplot(grid_processes, aes(x = pop_size, y = iota, fill = iota)) +
+  geom_tile() +
+  scale_fill_viridis_c(option = "inferno", direction = -1) +
+  labs(
+    x = "ectoparasite population size",
+    y = "iota",
+    fill = "immigration_rate"
+  ) +
+  theme_minimal()
+iota_plot
+
+```
+

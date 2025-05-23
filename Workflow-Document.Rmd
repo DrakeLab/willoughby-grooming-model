@@ -24,7 +24,7 @@ We also set some default parameters to make things simpler later.
 
 ```{r, functions}
 birthrate <- function(x, b0, theta) b0*x*(x/(theta+x)) # function for birth rate with Allee effect (theta)
-deathrate <- function(x, d0, d1) (d0+d1*x)*x # function for death rate (mew)
+deathrate <- function(x, d0, d1) (d0+d1*x)*x # function for death rate (mu)
 immigrationrate <- function (x, iota) iota # function for immigration rate (iota)
 
 # set initial conditions parameters: birth rate, allee effect, small death rate, death rate at high pops 
@@ -32,6 +32,9 @@ immigrationrate <- function (x, iota) iota # function for immigration rate (iota
 ## we are going to vary parameters for:  
 theta_vals <- seq(0, 10, by = 1) # allee effect (none to high (n = 10))
 iota_vals <- seq(0, 10, by = 1) # immigration (none to high (n = 10))
+
+
+
 # set for each: 
 ## Basic Model (0)
 parms0 <-  c(b0=0.27, theta=0, d0=0, d1=0.01, iota=0, initial_pop = 2) # no allee, no immigration
@@ -565,5 +568,14 @@ ggplot(eod_pop_last75, aes(x = population, group = sim_id, color = model)) +
 ```
 ```{r calculate aggregation metrics}
 
+```
+```{r plot 100 years, fig.width=8, fig.height=2}
+century_plot <- ggplot(simulation_results, aes(x = time, y = population)) +
+  geom_line(size = 0.01) +  
+  labs(x = "Time", y = "Population Size", color = "Simulation ID", 
+       caption = ) +
+  theme_classic() +
+  theme(legend.position = "none")  # hide legend cause too many lines
+century_plot 
 ```
 

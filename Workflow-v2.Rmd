@@ -1,0 +1,332 @@
+---
+title: "Workflow-v2"
+author: "Anna Willoughby"
+date: "2025-05-22"
+output: pdf_document
+---
+
+```{r setup, include=TRUE}
+knitr::opts_chunk$set(echo = TRUE, cache=TRUE)
+library('deSolve') # solving ordinary differential equations
+library(dplyr) # data wrangling
+library(ggplot2) # pretty plots
+library(lhs) # latin hypercube sampling
+set.seed(1993)
+```
+
+## Model
+
+In this document we seek to use a birth-death-immigration process to model the number of ectoparasites on a host.A full description of the model is at https://github.com/DrakeLab/willoughby-grooming-model.
+
+We start by writing functions for the birth rate, death rate, and immigration rate.
+In all cases, we let the state variable ($x$) be the first parameter.
+We also set some default parameters to make things simpler later.
+
+
+```{r, functions}
+birthrate <- function(x, b0, theta) b0*x*(x/(theta+x)) # function for birth rate with Allee effect (theta)
+
+# we are going to explore different mortality rates through grooming scenarios: 
+## PROGRAMMED 
+## G is some threshold of ectos that the host can groom per time period
+deathrate_prg <- function(x, G) {
+  pmin(1, G / x)  # cap at 1 to avoid unrealistic death rates > 1
+} 
+
+## STIMULUS - Driven 
+## dmax =  maximum grooming-induced per capita death rate
+## 𝑘 = half-saturation constant — the population size at which half of dmax is reached
+# deathrate_stim <- function(x, d0, dmax, k) (d0 + (dmax * x) / (k + x))*x
+
+immigrationrate <- function (x, iota) iota # function for immigration rate (iota)
+
+# set initial conditions parameters
+
+## birth rate is standard across all scenarios, right now as 100 flea births per year (0.27 per day)
+## we are going to vary parameters for:  
+theta_vals <- seq(0, 10, by = 1)
+iota_vals <- seq(0, 10, by = 1) # 
+# variation in the max threshold 
+G_vals <- seq(0,100, by = 1)
+
+n_samples <- 500  # number of parameter combos
+lhs_matrix <- randomLHS(n_samples, 3)  # for theta, G, iota
+
+# Rescale each column to your parameter ranges
+theta_vals <- lhs_matrix[,1] * 10        #  allee effect (none to high (n = 10))
+G_vals     <- lhs_matrix[,2] * 100       # 0 to 100
+iota_vals  <- lhs_matrix[,3] * 10        # immigration (none to high (n = 10))
+
+# Construct parameter set
+param_grid <- data.frame(
+  b0 = 0.27, # constant
+  theta = theta_vals,
+  G = G_vals,
+  iota = iota_vals,
+  initial_pop = 2 # constant
+)
+```
+
+## Stochastic Model
+
+Now, we want to simulate a birth-death-immigration process.
+We start with some hyperparameters of the simulation.
+
+```{r set some simulation rules}
+num_simulations <- 1  # Number of times to run the simulation
+# max.events <- 1000 # maximum events
+max.time <- 730 # 2 year max for a squirrel  
+```
+
+Here we simulate the process
+
+```{r run stochastic models}
+system.time({
+  for (i in 1:10) {
+
+simulation_pg <- vector("list", nrow(param_grid))  # one sim per parameter set
+
+for (i in 1:nrow(param_grid)) {
+  
+  # Extract parameter values for this run
+  parms <- param_grid[i, ]
+  
+  # Initialize
+  events <- 0
+  time <- 0
+  x <- parms$initial_pop
+  
+  # Store simulation output
+  simulation_results <- data.frame(
+    event = numeric(),
+    time = numeric(),
+    population = numeric(), 
+    event_type = character(),
+    sim_id = numeric(),
+    param_id = numeric() 
+  )
+
+  while (time[length(time)] <= max.time) {
+    events <- events + 1
+    current.size <- x[length(x)]
+    current.time <- time[length(time)]
+    
+    # Calculate rates using current parasite load and this parameter set
+    b <- birthrate(current.size, b0 = parms$b0, theta = parms$theta)
+    d <- deathrate_prg(current.size, G = parms$G)
+    iota <- immigrationrate(current.size, iota = parms$iota)
+    
+    total.rate <- b + d + iota
+    if (total.rate == 0 || is.na(total.rate)) break
+
+    increment.time <- -log(1 - runif(1)) / total.rate
+    
+    # Choose which event occurs
+    event_probs <- c(d, b, iota) / total.rate
+    event_outcome <- sample(c("death", "birth", "immigration"), size = 1, prob = event_probs)
+    change <- ifelse(event_outcome == "death", -1,
+              ifelse(event_outcome == "birth", 1, 1))  # immigration = +1
+    
+    new_size <- max(0, current.size + change)
+    new_time <- current.time + increment.time
+
+    # Append row
+    simulation_results <- rbind(simulation_results, data.frame(
+      event = events,
+      time = new_time,
+      population = new_size,
+      event_type = event_outcome,
+      sim_id = 1,
+      param_id = 1
+    ))
+
+    time <- c(time, new_time)
+    x <- c(x, new_size)
+  }
+
+  # Store result for this parameter set
+  simulation_pg[[i]] <- simulation_results
+}
+
+ }
+})
+saveRDS(simulation_pg, "data/simulation_pg.Rdata")
+
+
+```
+
+Now, I need a way to sample from these data.
+
+```{r plot stochastic model output}
+
+
+# make a plot with all the simulations 
+ggplot(results0, aes(x = time, y = population, group = sim_id)) +
+  geom_line(alpha = 0.3) +  # Add transparency to avoid clutter
+  labs(x = "Time", y = "Population Size", color = "Simulation ID", 
+       caption = ) +
+  theme_classic() +
+  theme(legend.position = "none")  # hide legend cause too many lines
+ggplot(results1, aes(x = time, y = population, group = sim_id)) +
+  geom_line(alpha = 0.3) +  # Add transparency to avoid clutter
+  labs(caption = "Figure X. Ectoparasite population size across time (100 years)", 
+       x = "Time", y = "Population Size", color = "Simulation ID") +
+  theme_classic() +
+  theme(legend.position = "none", plot.caption = element_text(hjust=0.5, size=rel(1.2)))  # hide legend cause too many lines
+ggplot(results2, aes(x = time, y = population, group = sim_id)) +
+  geom_line(alpha = 0.3) +  # Add transparency to avoid clutter
+  labs(caption= "Figure X. Ectoparasite population size across time (100 years)", 
+       x = "Time", y = "Population Size", color = "Simulation ID") +
+  theme_classic() +
+  theme(legend.position = "none", plot.caption = element_text(hjust=0.5, size=rel(1.2)))  # hide legend cause too many lines
+ggplot(results3, aes(x = time, y = population, group = sim_id)) +
+  geom_line(alpha = 0.3) +  # Add transparency to avoid clutter
+  labs(x = "Time", y = "Population Size", color = "Simulation ID", 
+       caption="Figure X. Ectoparasite population size across time (100 years)") + 
+  theme_classic() +
+  theme(legend.position = "none", plot.caption = element_text(hjust=0.5, size=rel(1.2)))  # hide legend cause too many lines
+
+```
+
+```{r calculate traits - total pop}
+# FLEA POPULATION TRAITS - calculate relevant traits 
+
+## values for one simulation
+### Total Flea Population: the count of fleas during the entire simulation run 
+
+#### Function to calculate total flea population from immigration & birth events
+calculate_flea_population <- function(simulation_list) {
+  sapply(simulation_list, function(sim_df) {
+    sum(sim_df$event_type == "immigration") + sum(sim_df$event_type == "birth")
+  })
+}
+
+#### Apply function to all models
+flea_total_pop_lists <- lapply(all_simulations, calculate_flea_population)
+
+#### Plot histograms for each model as facet
+par(mfrow = c(2, 2))  # Arrange plots in a 2x2 grid
+for (i in seq_along(flea_total_pop_lists)) {
+  hist(flea_total_pop_lists[[i]], 
+       main = paste("Total Flea Pop -", names(flea_total_pop_lists)[i]), 
+       xlab = "Total Fleas", 
+       col = "lightblue", 
+       border = "black")
+}
+par(mfrow = c(1,1))  # Reset plot layout
+
+#### Convert list to long-format dataframe for ggplot
+flea_data <- bind_rows(
+  lapply(names(flea_total_pop_lists), function(model) {
+    data.frame(Total_Fleas = flea_total_pop_lists[[model]], Model = model)
+  })
+)
+
+#### Plot histogram using ggplot2 for each model as overlapping on same grid
+ggplot(flea_data, aes(x = Total_Fleas, fill = Model)) +
+  geom_histogram(aes(y = ..density..), position = "identity", alpha = 0.4, bins = 30) +
+  scale_fill_manual(values = c("#E69F00", "#56B4E9","grey", "darkmagenta")) +  # Custom colors
+  labs(title = "Total Flea Population Across Simulations",
+       x = "Total Fleas from Immigration & Birth",
+       y = "Density") +
+  theme_minimal()
+
+```
+
+```{r calculate traits - snapshot pops}
+### Snapshot/Sampling Event Flea Population: the count of fleas at one snapshot (e.g., end of day)
+
+#### create function round time to the nearest integer, keep only the last observation per time unit
+end_of_day_flea_pop <-function(sim){
+  sim %>%  # Apply operations to the dataset
+  mutate(time_unit = floor(time)) %>%  # Convert time to integer units
+  group_by(time_unit) %>%
+  slice_tail(n = 1) %>%  # Get the last observation per unit
+  ungroup() %>%
+  select(time_unit, population)  # Keep relevant columns
+}
+
+# apply the end of day calculation across simulations 
+sim0_end_of_day_pops <- lapply(simulation0, end_of_day_flea_pop)
+sim1_end_of_day_pops <- lapply(simulation1, end_of_day_flea_pop)
+sim2_end_of_day_pops <- lapply(simulation2, end_of_day_flea_pop)
+sim3_end_of_day_pops <- lapply(simulation3, end_of_day_flea_pop)
+
+# create a function to sample only a portion of the days (e.g. last 25%)
+subset_simulation <- function(sim_df, range_percent) {
+  # Ensure range_percent is a valid numeric vector of length 2 (e.g., c(0, 10) or c(75, 100))
+  if (length(range_percent) != 2 || any(range_percent < 0) || any(range_percent > 100)) {
+    stop("range_percent must be a numeric vector of length 2 between 0 and 100.")
+  }
+  
+  # Get the start and end time from the simulation
+  min_time <- min(sim_df$time_unit)
+  max_time <- max(sim_df$time_unit)
+
+  # Compute the time range corresponding to the percentage range
+  time_start <- min_time + (range_percent[1] / 100) * (max_time - min_time)
+  time_end <- min_time + (range_percent[2] / 100) * (max_time - min_time)
+
+  # Subset the dataframe based on the calculated time range
+  sim_df %>%
+    filter(time_unit >= time_start & time_unit <= time_end)
+}
+
+# limit population snapshots to latter 75% (eliminating burn-in period)
+sim0_eod_pop_last75 <- lapply(sim0_end_of_day_pops, subset_simulation, range_percent = c(26, 100))
+sim0_eod_pop_last75_combined <- bind_rows(
+  lapply(seq_along(sim0_eod_pop_last75), function(i) {
+    sim0_eod_pop_last75[[i]] %>% mutate(sim_id = as.factor(i))  # Assign simulation ID
+  })
+)
+sim0_eod_pop_last75_combined$model <- "0 - basic"
+sim0_eod_pop_last75_combined$sim_id <- paste("0-", sim0_eod_pop_last75_combined$sim_id, sep = "")
+sim1_eod_pop_last75 <- lapply(sim1_end_of_day_pops, subset_simulation, range_percent = c(26, 100))
+sim1_eod_pop_last75_combined <- bind_rows(
+  lapply(seq_along(sim1_eod_pop_last75), function(i) {
+    sim1_eod_pop_last75[[i]] %>% mutate(sim_id = as.factor(i))  # Assign simulation ID
+  })
+)
+sim1_eod_pop_last75_combined$model <- "1 - allee"
+sim1_eod_pop_last75_combined$sim_id <- paste("1-", sim1_eod_pop_last75_combined$sim_id, sep = "")
+
+sim2_eod_pop_last75 <- lapply(sim2_end_of_day_pops, subset_simulation, range_percent = c(26, 100))
+sim2_eod_pop_last75_combined <- bind_rows(
+  lapply(seq_along(sim2_eod_pop_last75), function(i) {
+    sim2_eod_pop_last75[[i]] %>% mutate(sim_id = as.factor(i))  # Assign simulation ID
+  })
+)
+sim2_eod_pop_last75_combined$model = "2 - resources"
+sim2_eod_pop_last75_combined$sim_id <- paste("2-", sim2_eod_pop_last75_combined$sim_id, sep = "")
+
+sim3_eod_pop_last75 <- lapply(sim3_end_of_day_pops, subset_simulation, range_percent = c(26, 100))
+sim3_eod_pop_last75_combined <- bind_rows(
+  lapply(seq_along(sim3_eod_pop_last75), function(i) {
+    sim3_eod_pop_last75[[i]] %>% mutate(sim_id = as.factor(i))  # Assign simulation ID
+  })
+)
+sim3_eod_pop_last75_combined$model = "3 - complex"
+sim3_eod_pop_last75_combined$sim_id <- paste("3-", sim3_eod_pop_last75_combined$sim_id, sep = "")
+
+eod_pop_last75 <- rbind(sim0_eod_pop_last75_combined, 
+                        sim1_eod_pop_last75_combined, 
+                        sim2_eod_pop_last75_combined, 
+                        sim3_eod_pop_last75_combined)
+# plot the histogram 
+# hist(sim0_eod_pop_last75[[1]]$population)
+ggplot(eod_pop_last75, aes(x = population, group = sim_id, color = model)) +
+ # geom_freqpoly(binwidth = 10, size = 1, alpha = 0.5) +  # stepbins like a histogram
+  geom_histogram(alpha = 0.2, aes(y = ..ncount..), position = 'identity', bins = 10) + 
+ # geom_bar(pos="dodge") +
+  scale_x_continuous(limits = c(0, 50)) +
+ # scale_y_continuous(limits = c(0, 0.15)) +
+  labs(title = "Distribution of Population Sizes for last 75% of simulation (n = 541 time points) ",
+       x = "Population Size",
+       y = "Frequency") +
+  theme_classic() + 
+ facet_grid(model ~ .)
+```
+
+```{r calculate aggregation metrics}
+
+```
