@@ -1,0 +1,347 @@
+---
+title: "Grooming Scenarios"
+author: "Anna Willoughby"
+date: "2025-05-22"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyr) 
+library(ggplot2)
+library(dplyr)
+library(gridExtra) # plotting multipanels 
+```
+
+```{r single scenarios}
+# Define parasite density range
+x <- seq(0.01, 100, length.out = 1000)
+
+# Define grooming scenarios 
+
+## no grooming 
+death_none <- function(x) rep(0, length(x))
+
+## programmed to a certain number of fleas per day (G)
+death_programmed <-  function(x, G = 10) {
+  pmin(1, G / x)  # cap at 1 to avoid unrealistic death rates > 1
+} 
+
+## saturate to a % of fleas (e.g., stimulus driven) perG
+death_stimulus <- function(x, d0 = 0, dmax = 1, perG  = 0.75) {
+  k <- x * (1 - perG) / perG
+  d0 + (dmax * x) / (k + x)
+}
+
+## costly, stimulus driven to a certain point, but then there is a cost 
+death_costly <- function(x, max = 1, mu = 10, sigma = 10) {
+  max * exp(-((x - mu)^2) / (2 * sigma^2))
+}
+
+# Evaluate each function
+df <- data.frame(
+  x = x,
+  none = death_none(x),
+  programmed = death_programmed(x),
+  stimulus = death_stimulus(x),
+  costly = death_costly(x)
+)
+
+
+df_long <- pivot_longer(df, -x, names_to = "grooming scenario", values_to = "DeathRate")
+
+# Plot
+## Facet plot of grooming scenarios 
+ggplot(df_long, aes(x = x, y = DeathRate, color = `grooming scenario`)) +
+  geom_line(size = 1.2) +
+  facet_wrap(~factor(`grooming scenario`, levels = c("none", "programmed", "stimulus", "costly")))  +
+  labs(
+    x = "ectoparasite population size",
+    y = expression(mu)
+  ) +
+  theme_minimal() +
+  scale_color_brewer(palette = "Dark2") + 
+  theme(legend.position = "none")
+
+## Merge plot of grooming scenarios 
+  
+```
+
+
+```{r continuous parameter space }
+# plot different grooming scenarios 
+
+# 1. Define parameter ranges
+x_vals <- seq(1, 100, length.out = 100)  # parasite population size 
+G_vals <- seq(1, 100, length.out = 100)   # grooming efficiency
+
+# 2. Create a grid of all combinations
+grid <- expand.grid(
+  pop_size = x_vals,
+  groom_efficiency = G_vals
+)
+
+# 3. Define total groomed for each scenario
+
+# Programmed: can remove up to G fleas per day
+grid$programmed <- pmin(grid$pop_size, grid$groom_efficiency)
+grid$programmed_rate <- grid$programmed/ grid$pop_size
+
+# Stimulus-driven: can remove up to %perG per day 
+k_vals <-
+grid$stimulus <- grid$pop_size*grid$groom_efficiency/100 # thinking if saturating at 0.75% 
+
+# Costly: Gaussian centered at mu = 50, sigma = 15
+mu <- 50
+sigma <- 15
+efficiency <- exp(-((grid$pop_size - mu)^2) / (2 * sigma^2))
+grid$costly <- grid$death_rate * efficiency
+
+# 4. Reshape for plotting
+plot_data <- pivot_longer(grid, cols = c("programmed", "stimulus", "costly"),
+                          names_to = "scenario", values_to = "total_groomed")
+
+plot_data$scenario <- factor(plot_data$scenario,
+                             levels = c("programmed", "stimulus", "costly"))
+
+# 5. Plot faceted heatmap
+ggplot(plot_data, aes(x = pop_size, y = death_rate, fill = total_groomed)) +
+  geom_tile() +
+  scale_fill_viridis_c(option = "inferno", direction = -1) +
+  facet_wrap(~scenario) +
+  labs(
+    x = "ectoparasite population size",
+    y = "grooming efficiency",
+    fill = "mortality rate"
+  ) +
+  theme_minimal()
+
+```
+```{r}
+# plot different grooming scenarios 
+
+# 1. Define parameter ranges
+x_vals <- seq(1, 100, length.out = 100)  # parasite population size 
+G_vals <- seq(1, 100, length.out = 100)   # grooming efficiency
+
+# 2. Create a grid of all combinations
+grid_prog <- expand.grid(
+  pop_size = x_vals,
+  groom_efficiency = G_vals
+)
+
+# Provide some columns for 
+## scenario 
+grid_prog$scenario <- grid_prog$groom_efficiency
+
+# Programmed: can remove up to G fleas per day
+grid_prog$fleas_groomed <- pmin(grid_prog$pop_size, grid_prog$groom_efficiency)
+grid_prog$death_rate <- grid_prog$fleas_groomed/ grid_prog$pop_size
+
+# PROGRAMMED
+## Plot full parameter space for Programmed 
+ggplot(grid_prog, aes(x = pop_size, y = groom_efficiency, fill = death_rate)) +
+  geom_tile() +
+  scale_fill_viridis_c(option = "inferno", direction = -1) +
+  labs(
+    x = "ectoparasite population size",
+    y = "programmed groom limit",
+    fill = "mortality rate"
+  ) +
+  theme_classic()
+
+## PROGRAMMED
+# Plot example for all grooming efficiency scenarios 
+prog_scenarios <- ggplot(grid_prog, aes(x = pop_size, y = death_rate, 
+                      group = groom_efficiency, color = fleas_groomed)) +
+  geom_line() +
+  scale_color_gradientn(
+    colours = c("gray70", viridis::viridis(255, option = "inferno", direction = -1)),
+    values  = scales::rescale(c(0, 100)),
+    limits  = c(0, 100),
+    breaks  = c(0, 25, 50, 75, 100),
+    name    = "ectoparasite deaths"
+  ) +
+  labs(
+    x = "ectoparasite population size",
+    y = "death rate",
+    title = expression(bold("a.") ~ " Programmed")
+  ) +
+  theme_classic()
+prog_scenarios # check all good
+
+## make a no legend version for multi-panel
+prog_scenarios_nl <- prog_scenarios + 
+  theme(legend.position = "none")
+
+
+# Stimulus-driven: can remove up to %perG per day 
+stim_rates <- seq(0.01, 1, length.out = 100)  # death rates (for stimulus)
+
+grid_stim <- expand.grid(
+  pop_size = x_vals,
+  death_rate = stim_rates
+)
+grid_stim$scenario <- as.integer(factor(grid_stim$death_rate))
+grid_stim$fleas_groomed <- floor(grid_stim$pop_size*grid_stim$death_rate)
+
+## Plot full parameter space for Stimulus
+ggplot(grid_stim, aes(x = pop_size, y = fleas_groomed, fill = death_rate)) +
+  geom_tile() +
+  scale_fill_viridis_c(option = "inferno", direction = -1) +
+  labs(
+    x = "ectoparasite population size",
+    y = "grooming efficiency",
+    fill = "mortality rate"
+  ) +
+  theme_classic()
+
+stim_scenarios <- ggplot(grid_stim, aes(x = pop_size, y = death_rate, 
+                      group = death_rate, color =  fleas_groomed)) +
+  geom_line() +
+  scale_color_gradientn(
+    colours = c("gray70", viridis::viridis(255, option = "inferno", direction = -1)),
+    values  = scales::rescale(c(0, 100)),
+    limits  = c(0, 100),
+    breaks  = c(0, 25, 50, 75, 100),
+    name    = "Ectoparasite Deaths"
+  ) +
+  labs(
+    x = "ectoparasite population size",
+    y = "death rate",
+    title = expression(bold("b.") ~ " Stimulus-driven")
+  ) +
+  theme_classic()
+stim_scenarios # check all good 
+
+## make a no legend version for multi-panel
+stim_scenarios_nl_ny <- stim_scenarios + 
+  theme(legend.position = "none", 
+        axis.title.y = element_blank(),
+        axis.text.y  = element_blank(),
+        axis.ticks.y = element_blank())
+
+# Costly: Gaussian centered at a variable peak/optimal ectoparasite that then decreases 
+
+## explore 100 different scenarios of cost 
+cost_scenarios <- data.frame(
+  scenario = 1:100,
+  mu = runif(100, 10, 50),
+  sigma = runif(100, 5, 25)
+)
+
+grid_cost  <- expand_grid(
+  pop_size = 1:100, # ectoparasite population size
+  scenario = 1:100 # this changes the type of gaussian curve
+) 
+
+grid_cost <- left_join(grid_cost, cost_scenarios, by = "scenario")
+grid_cost$death_rate <- exp(-((grid_cost$pop_size - grid_cost$mu)^2) / (2 * grid_cost$sigma^2))
+grid_cost$fleas_groomed <- floor(grid_cost$pop_size*grid_cost$death_rate)
+
+
+cost_scenarios <- ggplot(grid_cost, aes(x = pop_size, y = death_rate, 
+                      group = scenario, color =  fleas_groomed)) +
+  geom_line() +
+  scale_color_gradientn(
+    colours = c("gray70", viridis::viridis(255, option = "inferno", direction = -1)),
+    values  = scales::rescale(c(0, 100)),
+    limits  = c(0, 100),
+    breaks  = c(0, 25, 50, 75, 100),
+    name    = "ectoparasite deaths"
+  ) +
+  labs(
+    x = "ectoparasite population size",
+    y = "death rate",
+   title = expression(bold("c.") ~ " Costly")
+  ) +
+  theme_classic() +
+  theme(legend.position = c(0.98, 0.98),
+        legend.justification = c(1, 1), 
+        legend.background = element_rect(fill = NA, color = NA),
+        legend.box.background = element_rect(fill = NA, color = NA), 
+        legend.text  = element_text(size = 6),
+        legend.title = element_text(size = 7)) + 
+  guides(
+  color = guide_colorbar(
+    title.position = "top",
+    title.hjust = 1, 
+    barheight = unit(0.8, "in"),
+    barwidth  = unit(0.2, "in"),
+    ticks = FALSE))
+cost_scenarios # check all good 
+
+# remove y axis for multipanel
+cost_scenarios_ny <- cost_scenarios + 
+  theme(axis.title.y = element_blank(),
+  axis.text.y  = element_blank(),
+  axis.ticks.y = element_blank())
+
+# plot all three scenarios next to eachother 
+png(filename="figures/groom_scenarios.png", width = 7.5, height =3, unit = 'in', res = 300)
+grid.arrange(prog_scenarios_nl, stim_scenarios_nl_ny, cost_scenarios_ny, nrow = 1)
+dev.off()
+```
+
+
+
+```{r}
+## need to make Grooming rates for much larger parasite populations 
+
+# 1. Define parameter ranges
+fm_x_vals <- seq(0, 1000, length.out = 1001)  # parasite population size 
+G_vals <- seq(1, 100, length.out = 100)   # grooming efficiency
+
+# 2. Create a grid of all combinations
+grid_prog_fm <- expand.grid(
+  pop_size = fm_x_vals,
+  groom_efficiency = G_vals
+)
+
+# Provide some columns for 
+## scenario 
+grid_prog_fm$scenario <- grid_prog_fm$groom_efficiency
+
+# Programmed: can remove up to G fleas per day
+grid_prog_fm$fleas_groomed <- pmin(grid_prog_fm$pop_size, grid_prog_fm$groom_efficiency)
+grid_prog_fm$death_rate <- grid_prog_fm$fleas_groomed/ grid_prog_fm$pop_size
+
+# Stimulus-driven: can remove up to %perG per day 
+grid_stim_fm <- expand.grid(
+  pop_size = fm_x_vals,
+  death_rate = stim_rates
+)
+grid_stim_fm$scenario <- as.integer(factor(grid_stim_fm$death_rate))
+grid_stim_fm$fleas_groomed <- floor(grid_stim_fm$pop_size*grid_stim_fm$death_rate)
+
+
+# Costly: Gaussian centered at a variable peak/optimal ectoparasite that then decreases 
+
+## explore 100 different scenarios of cost 
+cost_scenarios_fm <- data.frame(
+  scenario = 1:100,
+  mu = runif(100, 10, 50),
+  sigma = runif(100, 5, 25)
+)
+
+grid_cost_fm  <- expand_grid(
+  pop_size = 0:1000, # ectoparasite population size
+  scenario = 1:100 # this changes the type of gaussian curve
+) 
+
+grid_cost_fm <- left_join(grid_cost_fm, cost_scenarios_fm, by = "scenario")
+grid_cost_fm$death_rate <- exp(-((grid_cost_fm$pop_size - grid_cost_fm$mu)^2) / (2 * grid_cost_fm$sigma^2))
+grid_cost_fm$fleas_groomed <- floor(grid_cost_fm$pop_size*grid_cost_fm$death_rate)
+
+# saving grooming scenarios for use in the model 
+grid_prog_fm$groom_type <- "programmed"
+grid_prog_fm <- grid_prog_fm[, c("groom_type", "scenario", "pop_size", "death_rate")]
+grid_stim_fm$groom_type <- "stimulus"
+grid_stim_fm <- grid_stim_fm[, c("groom_type", "scenario", "pop_size", "death_rate")]
+grid_cost_fm$groom_type <- "costly"
+grid_cost_fm <- grid_cost_fm[, c("groom_type", "scenario", "pop_size", "death_rate")]
+
+grooming_deathrates <- rbind(grid_prog_fm, grid_stim_fm, grid_cost_fm)
+write.csv(grooming_deathrates, file = "data/grooming_deathrates.csv")
+```
+
