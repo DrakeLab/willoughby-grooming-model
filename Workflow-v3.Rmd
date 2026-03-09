@@ -31,7 +31,9 @@ We also set some default parameters to make things simpler later.
 # function for birth rate with Allee effect (theta)
 birthrate <- function(x, b0, theta, K){
   b <- b0*x*(x/(theta+x)) # baseline births 
-  b * pmax(0, 1 - x / K) # birth decreases at high densities
+  b_dd <- b*x*(1 - x/ K) # birth decreases at high densities
+  b_wA_dd <- pmax(0, b_dd)
+  b_wA_dd 
 }
 
 immigrationrate <- function (x, iota) iota # function for immigration rate (iota)
@@ -43,12 +45,12 @@ immigrationrate <- function (x, iota) iota # function for immigration rate (iota
 groom_prg_scenarios <- data.frame(scenario = seq(1, 100, length.out = 100), # 100 scenarios 
                                   G_vals = seq(1, 100, length.out = 100)) # grooming efficiency
 #### Generate a function for grooming deathrate based on pop size 
-groomrate_prg <- function(x, scenario){
+groomrate_prg <- function(pop.size, scenario){
   groom_prg_scenario <- groom_prg_scenarios %>% dplyr::filter(scenario == scenario) # filter to scenario 
-  fleas_groomed <- pmin(x, groom_prg_scenario[1,2]) # how much grooming will happen
-  death_rate <- ifelse(x == 0, 0, # avoids NaNs
-                                  fleas_groomed / x)
-  death_rate
+ death_rate <- pmin(pop.size, groom_prg_scenario[1,2]) # how much grooming will happen
+#  death_rate <- ifelse(x == 0, 0, # avoids NaNs
+        #                          fleas_groomed / pop.size)
+#  death_rate
 }
 
 ### STIMULUS
@@ -57,46 +59,46 @@ groom_stm_scenarios <- data.frame(scenario = seq(1, 100, length.out = 100), # 10
 groom_stm_scenarios$groom_rate <- groom_stm_scenarios$G_vals / 100
   
 #### Generate a function for stimulus grooming deathrate based on pop size 
-groomrate_stm <- function(x, scenario){
-  groom_stm_scenario <- groom_stm_scenarios %>% dplyr::filter(scenario == scenario) # filter to scenario 
-  death_rate <- ifelse(x == 0, 0, # avoids NaNs
-                       groom_stm_scenario[1,3])
+groomrate_stm <- function(pop.size, scenario){
+  death_rate <- ifelse(pop.size == 0, 0, # avoids NaNs
+                       groom_stm_scenarios[scenario,2])
   death_rate
 }
 
 
 ### Costly
 groom_cst_scenarios <- data.frame(scenario = 1:100,
-                                  mu = runif(100, 10, 50),
+                                  mu = runif(100, 5, 50),
                                   sigma = runif(100, 5, 25))
 
 #### Generate a function for costly grooming deathrate based on pop size 
-groomrate_cst <- function(x, scenario){
+groomrate_cst <- function(pop.size, scenario){
   groom_cst_scenario <- groom_cst_scenarios %>% dplyr::filter(scenario == scenario) # filter to scenario 
-  death_rate <- ifelse(x == 0, 0, # avoids NaNs
-                       exp(-((x - groom_cst_scenario$mu)^2) / (2 * groom_cst_scenario$sigma^2))) # normal distribution
+  death_rate <- ifelse(pop.size == 0, 0, # avoids NaNs
+                       exp(-((pop.size - groom_cst_scenario$mu)^2) / (2 * groom_cst_scenario$sigma^2))) # normal distribution
   death_rate
 }
 
 # Function to select a groom strategy based on defined parameter: 
 get_groom_rate <- function(x, groom_strategy, scenario) {
   
- ifelse(groom_strategy ==  "none", 0,
- ifelse(groom_strategy ==  "programmed", groomrate_prg(x, scenario),
+ ifelse(groom_strategy == "none", 0,
+ ifelse(groom_strategy == "programmed", groomrate_prg(x, scenario),
  ifelse(groom_strategy == "stimulus", groomrate_stm(x, scenario),
  ifelse(groom_strategy == "costly", groomrate_cst(x, scenario), "Unknown groom_type"))))
 }
 
 # Function for density dependent deaths 
-deathrate_dd <- function(x, dmax = 1, x_mid = 100, s = 20) {
-     dmax / (1 + exp(-(x - x_mid) / s))
+deathrate_dd <- function(pop.size, dmax = 1, x_mid = 50, s = 20) {
+     dmax / (1 + exp(-(pop.size - x_mid) / s))
 }
+
 # set initial conditions parameters
 
-## birth rate is standard across all scenarios, right now as 100 flea births per year (0.27 per day)
+## birth rate is standard across all scenarios, right now as 37.5 flea births per year (0. per day)
 ## we are going to vary parameters for:  
 theta_vals <- seq(0, 10, by = 1)
-iota_vals <- seq(0, 10, by = 1) 
+iota_vals <- seq(0, 100, by = 1) 
 scenario_vals <- seq(1,100, by = 1)
 
 n_samples <- 500  # number of parameter combos
@@ -104,12 +106,12 @@ lhs_matrix <- randomLHS(n_samples, 3)  # for theta, iota
 
 # Rescale each column to your parameter ranges
 theta_vals <- lhs_matrix[,1] * 10        #  allee effect (none to high (n = 10))
-iota_vals  <- lhs_matrix[,2] * 10        # immigration (none to high (n = 10))
+iota_vals  <- lhs_matrix[,2] * 1        # immigration (none to high (n = 5))
 scenario_vals <- floor(lhs_matrix[,3] * 100)    # which grooming scenario 
 
 # Construct parameter set
 param_grid <- data.frame(
-  b0 = 0.27, # constant
+  b0 = log(37.5)/35, # constant [log(female fecundity per lifetime)/generation time]
   theta = theta_vals,
   iota = iota_vals,
   scenario = scenario_vals,
@@ -121,7 +123,6 @@ groom_strategies <- c("none", "programmed", "stimulus", "costly")
 param_grid_wgroom <- merge(param_grid,
                              data.frame(groom_strategy = groom_strategies),
                              by = NULL)
-
 ```
 
 ## Stochastic Model
@@ -168,8 +169,9 @@ run_one_parameter_set <- function(task_i){
       current.size <- x[length(x)]
       current.time <- time[length(time)]
 
-      b <- birthrate(current.size, parms$b0, parms$theta, 300)
+      b <- birthrate(current.size, parms$b0, parms$theta, 50)
       g <- get_groom_rate(current.size, parms$groom_strategy, parms$scenario)
+      #message("Current size", current.size, ", groom rate", g) # mid function checks
       d <- deathrate_dd(current.size) + g
       iota <- immigrationrate(current.size, iota = parms$iota)
 
@@ -219,11 +221,12 @@ run_one_parameter_set <- function(task_i){
 
 # First test out on one 
 system.time({
-    simulation_test2 <-run_one_parameter_set(1002)
+    simulation_test <-run_one_parameter_set(584)
 }
 )
 
-
+ggplot(simulation_test, aes(x = time, y = population)) + 
+         geom_line()
   
 # Now run for the full simulation across the 10 clusters 
 system.time({
@@ -235,15 +238,18 @@ system.time({
 
   # Move main environment items to each of the clusters
   clusterExport(cl, 
-                c( "param_grid", "max.time", "task_grid", "groom_prg_scenarios",
-                   "birthrate", "groomrate_prg", "deathrate_dd", "immigrationrate" ))
+                c("groom_prg_scenarios","groom_stm_scenarios", "groom_cst_scenarios",
+                   "param_grid_wgroom","max.time", "task_grid", 
+                   "birthrate", "deathrate_dd", "immigrationrate", 
+                  "groom_strategies", "get_groom_rate", "groomrate_prg", "groomrate_stm", "groomrate_cst"
+                  ))
   
-  simulation_pg <- parLapply(cl, 1:nrow(task_grid), run_one_parameter_set)
+  simulation <- parLapply(cl, 1:nrow(task_grid), run_one_parameter_set)
 
   on.exit(stopCluster(cl), add = TRUE)
 })
 
-saveRDS(simulation_pg, "data/simulation_pg_v3.Rdata")
+saveRDS(simulation, "data/simulation.Rdata")
 
 ```
 Now, I need a way to sample from these data.
