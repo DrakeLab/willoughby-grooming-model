@@ -13,6 +13,7 @@ library(ggplot2) # pretty plots
 library(lhs) # latin hypercube sampling
 library(tidyr) # pipes
 library(parallel) # for running in parallel 
+library(gridExtra) # plotting multipanels 
 set.seed(1993)
 
 ```
@@ -30,10 +31,10 @@ We also set some default parameters to make things simpler later.
 
 # function for birth rate with Allee effect (theta)
 birthrate <- function(x, b0, theta, K){
-  b <- b0*x*(x/(theta+x)) # baseline births 
+  b <- b0*x*(x/(theta+x)) # baseline births with Allee
   b_dd <- b*x*(1 - x/ K) # birth decreases at high densities
   b_wA_dd <- pmax(0, b_dd)
-  b_wA_dd 
+  b_wA_dd # birth rate with Allee and density dependence
 }
 
 immigrationrate <- function (x, iota) iota # function for immigration rate (iota)
@@ -43,14 +44,11 @@ immigrationrate <- function (x, iota) iota # function for immigration rate (iota
 ## Define all Grooming Scenarios: 
 ### PROGRAMMED 
 groom_prg_scenarios <- data.frame(scenario = seq(1, 100, length.out = 100), # 100 scenarios 
-                                  G_vals = seq(1, 100, length.out = 100)) # grooming efficiency
+                                  G_vals = seq(1, 300, length.out = 100)) # grooming efficiency
 #### Generate a function for grooming deathrate based on pop size 
 groomrate_prg <- function(pop.size, scenario){
-  groom_prg_scenario <- groom_prg_scenarios %>% dplyr::filter(scenario == scenario) # filter to scenario 
- death_rate <- pmin(pop.size, groom_prg_scenario[1,2]) # how much grooming will happen
-#  death_rate <- ifelse(x == 0, 0, # avoids NaNs
-        #                          fleas_groomed / pop.size)
-#  death_rate
+  groom_prg_scenario <- groom_prg_scenarios %>% dplyr::filter(scenario == scenario) # filter to scenario
+  death_rate <- pmin(pop.size, groom_prg_scenario[1,2]) # how much grooming will happen
 }
 
 ### STIMULUS
@@ -61,10 +59,9 @@ groom_stm_scenarios$groom_rate <- groom_stm_scenarios$G_vals / 100
 #### Generate a function for stimulus grooming deathrate based on pop size 
 groomrate_stm <- function(pop.size, scenario){
   death_rate <- ifelse(pop.size == 0, 0, # avoids NaNs
-                       groom_stm_scenarios[scenario,2])
+                       pop.size*groom_stm_scenarios[scenario,3])
   death_rate
 }
-
 
 ### Costly
 groom_cst_scenarios <- data.frame(scenario = 1:100,
@@ -75,7 +72,8 @@ groom_cst_scenarios <- data.frame(scenario = 1:100,
 groomrate_cst <- function(pop.size, scenario){
   groom_cst_scenario <- groom_cst_scenarios %>% dplyr::filter(scenario == scenario) # filter to scenario 
   death_rate <- ifelse(pop.size == 0, 0, # avoids NaNs
-                       exp(-((pop.size - groom_cst_scenario$mu)^2) / (2 * groom_cst_scenario$sigma^2))) # normal distribution
+                       pop.size*exp(-((pop.size - groom_cst_scenario$mu)^2) / 
+                                      (2 * groom_cst_scenario$sigma^2))) # normal distribution
   death_rate
 }
 
@@ -97,33 +95,38 @@ deathrate_dd <- function(pop.size, dmax = 1, x_mid = 50, s = 20) {
 
 ## birth rate is standard across all scenarios, right now as 37.5 flea births per year (0. per day)
 ## we are going to vary parameters for:  
-theta_vals <- seq(0, 10, by = 1)
-iota_vals <- seq(0, 100, by = 1) 
-scenario_vals <- seq(1,100, by = 1)
+theta_vals <- seq(0, 10, by = 1) # 10 different values
+iota_vals <- seq(0, 0.5, by = 0.05) # 10 different values
+scenario_vals <- seq(1,100, by = 10) # 10 different values (no grooming is an explicit scenario) 
 
-n_samples <- 500  # number of parameter combos
-lhs_matrix <- randomLHS(n_samples, 3)  # for theta, iota
-
-# Rescale each column to your parameter ranges
-theta_vals <- lhs_matrix[,1] * 10        #  allee effect (none to high (n = 10))
-iota_vals  <- lhs_matrix[,2] * 1        # immigration (none to high (n = 5))
-scenario_vals <- floor(lhs_matrix[,3] * 100)    # which grooming scenario 
-
-# Construct parameter set
-param_grid <- data.frame(
-  b0 = log(37.5)/35, # constant [log(female fecundity per lifetime)/generation time]
-  theta = theta_vals,
-  iota = iota_vals,
-  scenario = scenario_vals,
-  initial_pop = 2 # constant
+# construct full matrix of theta and iota options 
+ti_axes <- expand.grid(
+  theta = theta_vals, 
+  iota = iota_vals, 
+  scenario = scenario_vals
 )
 
 # Expand parameter set to include each grooming scenario 
 groom_strategies <- c("none", "programmed", "stimulus", "costly")
-param_grid_wgroom <- merge(param_grid,
-                             data.frame(groom_strategy = groom_strategies),
+tig_axes <- merge(ti_axes,
+                  data.frame(groom_strategy = groom_strategies),
                              by = NULL)
+
+
+# n_samples <- 500  # number of parameter combos
+# lhs_matrix <- randomLHS(n_samples, 3)  # for theta, iota
+
+# Rescale each column to your parameter ranges
+# theta_vals <- lhs_matrix[,1] * 10        #  allee effect (none to high (n = 10))
+# iota_vals  <- lhs_matrix[,2] * 5        # immigration (none to high (n = 5))
+# scenario_vals <- floor(lhs_matrix[,3] * 100)    # which grooming scenario 
+
+# Construct parameter set
+param_grid <- tig_axes
+param_grid$b0 <- log(78.75)/89/2 # constant [log(female fecundity per lifetime)/generation time]
+param_grid$initial_pop <- 1
 ```
+
 
 ## Stochastic Model
 
@@ -131,7 +134,7 @@ Now, we want to simulate a birth-death-immigration process.
 We start with some hyperparameters of the simulation.
 
 ```{r set some simulation rules}
-num_simulations <- 1  # Number of times to run the simulation
+num_simulations <- 10  # Number of times to run the simulation
 # max.events <- 1000 # maximum events
 max.time <- 730 # 2 year max for a squirrel  
 ```
@@ -144,7 +147,7 @@ Here we simulate the process
 
 # Define the task grid: 
 task_grid <- expand.grid(
-    param_id = 1:nrow(param_grid_wgroom),
+    param_id = 1:nrow(param_grid),
     sim_id   = 1:num_simulations)
 
 # Define running the whole model as a function 
@@ -155,7 +158,7 @@ run_one_parameter_set <- function(task_i){
     
     message("Parameter set ", param_id, ", Simulation", sim_id)
     
-    parms <- param_grid_wgroom[param_id, ]
+    parms <- param_grid[param_id, ]
 
     events <- 0
     time <- 0
@@ -169,26 +172,26 @@ run_one_parameter_set <- function(task_i){
       current.size <- x[length(x)]
       current.time <- time[length(time)]
 
-      b <- birthrate(current.size, parms$b0, parms$theta, 50)
+      b <- birthrate(current.size, parms$b0, parms$theta, 50) # 50 as K
       g <- get_groom_rate(current.size, parms$groom_strategy, parms$scenario)
       #message("Current size", current.size, ", groom rate", g) # mid function checks
-      d <- deathrate_dd(current.size) + g
+      d <- deathrate_dd(current.size) 
       iota <- immigrationrate(current.size, iota = parms$iota)
 
-      total.rate <- b + d + iota
+      total.rate <- b + g + d + iota
 
       if (is.na(total.rate) || total.rate <= 0) break
 
       increment.time <- -log(1 - runif(1)) / total.rate
 
-      event_probs <- c(d, b, iota) / total.rate
+      event_probs <- c(d, g, b, iota) / total.rate
       event_outcome <- sample(
-        c("death", "birth", "immigration"),
+        c("death","groomed","birth", "immigration"),
         size = 1,
         prob = event_probs
       )
 
-      change <- ifelse(event_outcome == "death", -1, 1)
+      change <- ifelse(event_outcome %in% c("death", "groomed"), -1, 1)
 
       new_size <- max(0, current.size + change)
       new_time <- current.time + increment.time
@@ -221,7 +224,7 @@ run_one_parameter_set <- function(task_i){
 
 # First test out on one 
 system.time({
-    simulation_test <-run_one_parameter_set(584)
+    simulation_test <-run_one_parameter_set(2565)
 }
 )
 
@@ -239,7 +242,7 @@ system.time({
   # Move main environment items to each of the clusters
   clusterExport(cl, 
                 c("groom_prg_scenarios","groom_stm_scenarios", "groom_cst_scenarios",
-                   "param_grid_wgroom","max.time", "task_grid", 
+                   "param_grid","max.time", "task_grid", 
                    "birthrate", "deathrate_dd", "immigrationrate", 
                   "groom_strategies", "get_groom_rate", "groomrate_prg", "groomrate_stm", "groomrate_cst"
                   ))
@@ -248,55 +251,438 @@ system.time({
 
   on.exit(stopCluster(cl), add = TRUE)
 })
+#saveRDS(simulation, "data/simulation_10rep.Rdata")
+
 
 saveRDS(simulation, "data/simulation.Rdata")
 
 ```
 Now, I need a way to sample from these data.
 
-```{r plot stochastic model output}
-# make a plot with all the simulations 
-ggplot(results0, aes(x = time, y = population, group = sim_id)) +
-  geom_line(alpha = 0.3) +  # Add transparency to avoid clutter
-  labs(x = "Time", y = "Population Size", color = "Simulation ID", 
-       caption = ) +
-  theme_classic() +
-  theme(legend.position = "none")  # hide legend cause too many lines
-ggplot(results1, aes(x = time, y = population, group = sim_id)) +
-  geom_line(alpha = 0.3) +  # Add transparency to avoid clutter
-  labs(caption = "Figure X. Ectoparasite population size across time (100 years)", 
-       x = "Time", y = "Population Size", color = "Simulation ID") +
-  theme_classic() +
-  theme(legend.position = "none", plot.caption = element_text(hjust=0.5, size=rel(1.2)))  # hide legend cause too many lines
-ggplot(results2, aes(x = time, y = population, group = sim_id)) +
-  geom_line(alpha = 0.3) +  # Add transparency to avoid clutter
-  labs(caption= "Figure X. Ectoparasite population size across time (100 years)", 
-       x = "Time", y = "Population Size", color = "Simulation ID") +
-  theme_classic() +
-  theme(legend.position = "none", plot.caption = element_text(hjust=0.5, size=rel(1.2)))  # hide legend cause too many lines
-ggplot(results3, aes(x = time, y = population, group = sim_id)) +
-  geom_line(alpha = 0.3) +  # Add transparency to avoid clutter
-  labs(x = "Time", y = "Population Size", color = "Simulation ID", 
-       caption="Figure X. Ectoparasite population size across time (100 years)") + 
-  theme_classic() +
-  theme(legend.position = "none", plot.caption = element_text(hjust=0.5, size=rel(1.2)))  # hide legend cause too many lines
+```{r calculate traits - total pop}
+# read in simulation data 
+sim10 <- readRDS("data/simulation_10rep.Rdata")
+results_sim10 <-  do.call(rbind, sim10)
+results_sim10$id <- paste(results_sim10$param_id, "-", results_sim10$sim_id, sep = "")
+
+# create functions to calculate output values 
+
+# FLEA POPULATION TRAITS - calculate relevant traits 
+
+
+# define some functions
+
+end_of_day_flea_pop <- function(sim){
+  
+  init_row <- data.frame(  # pre load initial conditions simulations 
+    event = 0,
+    time = 0,
+    population = 1,
+    event_type = "initial",
+    sim_id = sim$sim_id[1],
+    param_id = sim$param_id[1]
+  )
+
+  sim %>% # Apply operations to the dataset
+    bind_rows(init_row, .) %>%
+    mutate(time_unit = floor(time)) %>% # Convert time to integer units
+    group_by(time_unit) %>%
+    slice_tail(n = 1) %>% # Get the last observation per unit
+    ungroup() %>%
+    select(time_unit, population) %>% # Keep relevant columns
+    
+    # create full sequence
+    tidyr::complete(time_unit = 0:780) %>%
+    
+    # carry previous value forward
+    tidyr::fill(population, .direction = "down") %>% 
+    dplyr::filter(time_unit != 0) %>% # get rid of the initial seeding
+    pull(population) # only get a vector of the population sizes 
+}
+
+## values for one simulation
+
+summarize_simulations <- function(simulation_list) {
+  
+  result <- lapply(seq_along(simulation_list), function(i) {
+    
+    eod_burdens <- end_of_day_flea_pop(simulation_list[[i]])
+
+    sim_df <- simulation_list[[i]]
+    
+    
+    data.frame(
+      list_id = i,
+      sim_id = unique(sim_df$sim_id)[1],
+      param_id = unique(sim_df$param_id)[1],
+      ind_metric_total_pop = sum(sim_df$event_type == "immigration") + # calculate total pop.size
+                        sum(sim_df$event_type == "birth"),
+      ind_metric_total_groom = sum(sim_df$event_type == "groomed"), # calculate total flea groomed
+      
+      ind_metric_infest_days = sum(eod_burdens  > 0),
+      ind_metric_mean_daily_pop = mean(eod_burdens)
+    )
+  })
+  
+  do.call(rbind, result)
+}
+
+# run for each simulation 
+system.time({
+  flea_stat_df <- summarize_simulations(sim10) # each simulation
+}) 
+
+# summarize by parameters 
+flea_stat_per_param <- flea_stat_df %>% 
+  group_by(param_id) %>% 
+  summarise(ind_metric_total_pop = mean(flea_population), 
+            ind_metric_total_grm = mean(host_groom_effort), 
+            ind_metric_inf_days = mean(infested_days), 
+            ind_metric_avg_dy_burden = mean(mean_daily_pop))
+
+# merge in parameters 
+param_grid$param_id <-  seq_along(tig_axes[,1])
+flea_stat_per_param <- left_join(flea_stat_per_param, param_grid, by ="param_id")
+
+# lets look at no grooming for now: 
+## filter to the no grooming
+flea_stat_per_param_ng <- flea_stat_per_param %>% 
+  dplyr::filter(groom_strategy=="none")
+## plot heatmap of total flea pop
+ggplot(flea_stat_per_param_ng, 
+       aes(x = theta, y = iota, fill = total_flea_pop)) +
+  geom_tile() +
+  scale_y_continuous(breaks = seq(0, 0.5, by = 0.1)) +
+  scale_fill_gradientn(colours = c("grey80", viridis::viridis(255, direction = -1)),
+                       values = scales::rescale(c(1, 500)),
+                       name = "total flea population", 
+                       breaks = c(1,100,200,300,400,500),
+                       labels = c("1","100","200","300","400","500")) +
+  labs(x = "theta",
+       y = "iota",
+       fill = "pop") +
+  theme_minimal()
+
+# now for a mid grooming scenarios (50) plot, faceted by different strategies 
+flea_stat_per_param_g51 <- flea_stat_per_param %>% 
+  dplyr::filter(scenario==51)
+## define levels of groom_stragety 
+flea_stat_per_param_g51$groom_strategy <- factor(flea_stat_per_param_g51$groom_strategy, 
+                                                 levels = c("none", "programmed", "stimulus",
+                                                            "costly"))
+               
+## plot heatmap of total flea pop
+ggplot(flea_stat_per_param_g51, 
+       aes(x = theta, y = iota, fill = total_flea_pop)) +
+  geom_tile() +
+  facet_wrap(~scale, ncol = 1) +
+  scale_y_continuous(breaks = seq(0, 0.5, by = 0.1)) +
+  scale_fill_gradientn(colours = c("grey80", viridis::viridis(255, direction = -1)),
+                       values = scales::rescale(c(1, 1000)),
+                       name = "total flea population", 
+                       breaks = c(1,250,500,750,1000),
+                       labels = c("1","250","500","750","1000")) +
+  labs(x = "theta",
+       y = "iota",
+       fill = "pop") +
+  theme_minimal()
+
+# plot individual infestation traits by resource 
+## convert into long data 
+flea_stat_per_param_long <- flea_stat_per_param %>%
+  pivot_longer(cols = starts_with("ind_metric_"), 
+                names_to = "metric",
+                values_to = "value") 
+
+# confirm groom strategy factors 
+flea_stat_per_param_long$groom_strategy <- factor(flea_stat_per_param_long$groom_strategy,
+                                                  levels = c("none", "programmed", "stimulus", "costly"))
+
+# plot individual metrics for only resource-induced changes to grooming, and no immigration 
+ggplot(flea_stat_per_param_long[flea_stat_per_param_long$iota == 0, ], 
+       aes(x = scenario, y = value, 
+           group = interaction(groom_strategy, theta), 
+           color = groom_strategy, alpha = theta)) +
+  geom_line(size = 2) +
+  scale_alpha(range = c(0.4, 1)) +
+  facet_wrap(groom_strategy~metric, ncol = 4, nrow=4, scales = "free_y") +
+  labs(x = "resource availability",
+       y = "value") +
+  theme_minimal()
+## Plot separate panels for individual metrics for only resource-induced changes to grooming and no immigration
+totpop_plot_ni <- ggplot(flea_stat_per_param_long[flea_stat_per_param_long$iota == 0 & 
+                                                  flea_stat_per_param_long$metric == "ind_metric_total_pop",], 
+                      aes(x = scenario, y = value, 
+                          group = interaction(groom_strategy, theta),  
+                          color = groom_strategy)) +
+  geom_line(size = 2) +
+  scale_alpha(range = c(0.4,1)) +
+  facet_wrap(~groom_strategy, ncol = 1) +
+  labs(x = "resource availability",
+       y = "total population") +
+  theme_minimal()  +
+  theme(strip.text.x = element_blank())
+totpop_plot_ni
+
+# remove legend for multi-panel plot: 
+totpop_plot_ni_nl <- totpop_plot_ni +
+  theme(legend.position = "none",
+        axis.title.x = element_blank()) # use joint label instead
+
+## average eod burden 
+dayburden_plot_ni <- ggplot(flea_stat_per_param_long[flea_stat_per_param_long$iota == 0 &
+                                                               flea_stat_per_param_long$metric == 
+                                                            "ind_metric_avg_dy_burden",], 
+                      aes(x = scenario, y = value, 
+                          group = interaction(groom_strategy, theta), 
+                          color = groom_strategy, alpha = theta)) +
+  geom_line(size = 2) +
+  facet_wrap(~groom_strategy, ncol = 1) +
+  labs(x = "resource availability",
+       y = "mean daily burden") +
+  theme_minimal()  +
+  theme(strip.text.x = element_blank())
+dayburden_plot_ni
+
+# remove legend for multi-panel plot: 
+dayburden_plot_ni_nl <- dayburden_plot_ni +
+  theme(legend.position = "none", 
+        axis.title.x = element_blank()) # use joint label instead
+
+## total fleas groomed  
+grooming_effort_plot_ni <- ggplot(flea_stat_per_param_long[flea_stat_per_param_long$iota == 0 &
+                                                             flea_stat_per_param_long$metric == 
+                                                            "ind_metric_total_grm",], 
+                      aes(x = scenario, y = value, group = interaction(groom_strategy, theta),
+                          color = groom_strategy, alpha = theta)) +
+  geom_line(size = 2) +
+  scale_alpha(range = c(0.4,1)) +
+  facet_wrap(~groom_strategy, ncol = 1) +
+  labs(x = "resource availability",
+       y = "total groomed population") +
+  theme_minimal()  +
+  theme(strip.text.x = element_blank())
+grooming_effort_plot_ni
+
+# remove legend for multi-panel plot: 
+grooming_effort_plot_ni_nl <- grooming_effort_plot_ni +
+  theme(axis.title.x = element_blank(), # use joint label instead 
+        legend.position = "none")
+  
+## infestation days 
+inf_days_plot_ni <- ggplot(flea_stat_per_param_long[flea_stat_per_param_long$iota == 0 &
+                                                      flea_stat_per_param_long$metric == 
+                                                            "ind_metric_inf_days",], 
+                      aes(x = scenario, y = round(value/780*100,2), 
+                          group = interaction(groom_strategy, theta), 
+                          color = groom_strategy, alpha = theta)) +
+  geom_line(size = 2) +
+  scale_alpha(range = c(0.4, 1)) +
+  facet_wrap(~groom_strategy, ncol = 1) +
+  labs(x = "resource availability",
+       y = "days with an infestation (%)") +
+  theme_minimal()  +
+  theme(strip.text.x = element_blank(), 
+        axis.title.x = element_blank()) # use joint label instead
+inf_days_plot_ni # check all good 
+
+# Multipanel plot for no immigration 
+png(filename="figures/FigureX4_ind_metrics_ni.png", width = 16, height =8, unit = 'in', res = 300)
+grid.arrange(totpop_plot_ni_nl, dayburden_plot_ni_nl , grooming_effort_plot_ni_nl, inf_days_plot_ni, 
+             nrow = 1,
+             bottom = "resource availability")
+dev.off()
+
+# Now Resources jointly impacts immigration and grooming 
+
+
+## convert so resources affects immigration same as grooming 
+# calculate appropriate 
+resource_pairs <- data.frame(
+  scenario = seq(1, 91, by = 10),
+  iota = seq(0.05, 0.5, by = 0.05)
+)
+
+flea_stat_per_param_long_ri_link <- flea_stat_per_param_long %>%
+  inner_join(resource_pairs, by = c("scenario", "iota"))
+
+# confirm grooming strategy levels
+flea_stat_per_param_long_ri_link$groom_strategy <- factor(flea_stat_per_param_long_ri_link$groom_strategy,
+                                                          levels = c("none", 
+                                                                     "programmed", 
+                                                                     "stimulus", 
+                                                                     "costly")) 
+# prepare individual metric plots 
+
+# PLOT OF RESOURCE on individual metrics with immigration-grooming paired and Theta = 2
+## total population 
+totpop_plot <- ggplot(flea_stat_per_param_long_ri_link[flea_stat_per_param_long_ri_link$theta==2 &
+                                        flea_stat_per_param_long_ri_link$metric == "ind_metric_total_pop",], 
+                      aes(x = scenario, y = value, group = groom_strategy, color = groom_strategy)) +
+  geom_line(size = 2) +
+  facet_wrap(~groom_strategy, ncol = 1) +
+  labs(x = "resource availability",
+       y = "total population") +
+  theme_minimal()  +
+  theme(strip.text.x = element_blank())
+totpop_plot
+
+# remove legend for multi-panel plot: 
+totpop_plot_nl <- totpop_plot +
+  theme(legend.position = "none",
+        axis.title.x = element_blank()) # use joint label instead
+
+## average eod burden 
+dayburden_plot <- ggplot(flea_stat_per_param_long_ri_link[flea_stat_per_param_long_ri_link$theta==2 &
+                                                            flea_stat_per_param_long_ri_link$metric == 
+                                                            "ind_metric_avg_dy_burden",], 
+                      aes(x = scenario, y = value, group = groom_strategy, color = groom_strategy)) +
+  geom_line(size = 2) +
+  facet_wrap(~groom_strategy, ncol = 1) +
+  labs(x = "resource availability",
+       y = "mean daily burden") +
+  theme_minimal()  +
+  theme(strip.text.x = element_blank())
+dayburden_plot
+
+# remove legend for multi-panel plot: 
+dayburden_plot_nl <- dayburden_plot +
+  theme(legend.position = "none", 
+        axis.title.x = element_blank()) # use joint label instead
+
+## total fleas groomed  
+grooming_effort_plot <- ggplot(flea_stat_per_param_long_ri_link[flea_stat_per_param_long_ri_link$theta==2 &
+                                                            flea_stat_per_param_long_ri_link$metric == 
+                                                            "ind_metric_total_grm",], 
+                      aes(x = scenario, y = value, group = groom_strategy, color = groom_strategy)) +
+  geom_line(size = 2) +
+  facet_wrap(~groom_strategy, ncol = 1) +
+  labs(x = "resource availability",
+       y = "total groomed population") +
+  theme_minimal()  +
+  theme(strip.text.x = element_blank())
+grooming_effort_plot
+
+# remove legend for multi-panel plot: 
+grooming_effort_plot_nl <- grooming_effort_plot +
+  theme(axis.title.x = element_blank(), # use joint label instead 
+        legend.position = "none")
+  
+## infestation days 
+inf_days_plot <- ggplot(flea_stat_per_param_long_ri_link[flea_stat_per_param_long_ri_link$theta==2 &
+                                                            flea_stat_per_param_long_ri_link$metric == 
+                                                            "ind_metric_inf_days",], 
+                      aes(x = scenario, y = round(value/780*100,2), 
+                          group = groom_strategy, color = groom_strategy)) +
+  geom_line(size = 2) +
+  facet_wrap(~groom_strategy, ncol = 1) +
+  labs(x = "resource availability",
+       y = "days with an infestation (%)") +
+  theme_minimal()  +
+  theme(strip.text.x = element_blank(), 
+        axis.title.x = element_blank()) # use joint label instead
+inf_days_plot # check all good 
+
+# Multipanel plot for one theta value (2)
+grid.arrange(totpop_plot_nl, dayburden_plot_nl , grooming_effort_plot_nl, inf_days_plot, nrow = 1,
+             bottom = "resource availability")
+
+# PLOT OF RESOURCE on individual metrics with immigration-grooming paired with variable Theta
+## total population for all thetas
+totpop_plot_at <- ggplot(flea_stat_per_param_long_ri_link[flea_stat_per_param_long_ri_link$metric == 
+                                                            "ind_metric_total_pop",], 
+                      aes(x = scenario, y = value, group = interaction(groom_strategy, theta), 
+                          color = groom_strategy, alpha = theta)) +
+  geom_line(size = 2) +
+  scale_alpha(range = c(0.4, 1)) +
+  facet_wrap(~groom_strategy, ncol = 1) +
+  labs(x = "resource availability",
+       y = "total population") +
+  theme_minimal()  +
+  theme(strip.text.x = element_blank())
+totpop_plot_at 
+
+# remove legend for multi-panel plot: 
+totpop_plot_at_nl <- totpop_plot_at +
+  theme(legend.position = "none",
+        axis.title.y = element_text(face = "bold", size =20),
+        axis.text.x = element_text(size=14),
+        axis.text.y= element_text(size=14),
+        axis.title.x = element_blank()) # use joint label instead
+
+## average eod burden for all thetas
+dayburden_plot_at <- ggplot(flea_stat_per_param_long_ri_link[flea_stat_per_param_long_ri_link$metric == 
+                                                            "ind_metric_avg_dy_burden",], 
+                      aes(x = scenario, y = value, group = interaction(groom_strategy, theta), 
+                          color = groom_strategy, alpha = theta)) +
+  geom_line(size = 2) +
+  scale_alpha(range = c(0.4, 1)) +
+  facet_wrap(~groom_strategy, ncol = 1) +
+  labs(x = "resource availability",
+       y = "mean daily burden") +
+  theme_minimal()  +
+  theme(strip.text.x = element_blank())
+dayburden_plot_at
+
+# remove legend for multi-panel plot: 
+dayburden_plot_at_nl <- dayburden_plot_at +
+  theme(legend.position = "none", 
+        axis.title.y = element_text(face = "bold", size =20),
+        axis.text.x = element_text(size=14),
+        axis.text.y= element_text(size=14),
+        axis.title.x = element_blank()) # use joint label instead
+
+## total fleas groomed  
+grooming_effort_plot_at <- ggplot(flea_stat_per_param_long_ri_link[flea_stat_per_param_long_ri_link$metric == 
+                                                            "ind_metric_total_grm",], 
+                      aes(x = scenario, y = value, group = interaction(groom_strategy,theta),
+                          color = groom_strategy, alpha = theta)) +
+  geom_line(size = 2) +
+  scale_alpha(range = c(0.4, 1)) +
+  facet_wrap(~groom_strategy, ncol = 1) +
+  labs(x = "resource availability",
+       y = "total groomed population") +
+  theme_minimal()  +
+  theme(strip.text.x = element_blank())
+grooming_effort_plot_at
+
+# remove legend for multi-panel plot: 
+grooming_effort_plot_at_nl <- grooming_effort_plot_at +
+  theme(axis.title.x = element_blank(), # use joint label instead 
+        legend.position = "none",
+        axis.title.y = element_text(face = "bold", size =20),
+        axis.text.x = element_text(size=14),
+        axis.text.y= element_text(size=14))
+  
+## infestation days 
+inf_days_plot_at <- ggplot(flea_stat_per_param_long_ri_link[flea_stat_per_param_long_ri_link$metric == 
+                                                            "ind_metric_inf_days",], 
+                      aes(x = scenario, y = round(value/780*100,2), 
+                          group = interaction(groom_strategy,theta),  
+                          color = groom_strategy, alpha = theta)) +
+  geom_line(size = 2) +
+  scale_alpha(range = c(0.4, 1)) +
+  facet_wrap(~groom_strategy, ncol = 1) +
+  labs(x = "resource availability",
+       y = "days with an infestation (%)") +
+  theme_minimal()  +
+  theme(strip.text.x = element_blank(), 
+        axis.title.x = element_blank(),# use joint label instead
+        axis.title.y = element_text(face = "bold", size =20),
+        axis.text.x = element_text(size=14),
+        axis.text.y= element_text(size=14))
+inf_days_plot_at # check all good 
+
+# Save Plot 
+png(filename="figures/FigureX5_ind_metrics_ri-link.png", width = 16, height =8, unit = 'in', res = 300)
+grid.arrange(totpop_plot_at_nl, dayburden_plot_at_nl , grooming_effort_plot_at_nl, 
+                                  inf_days_plot_at, nrow = 1,
+             bottom = grid::textGrob("resource availability",
+                               gp = grid::gpar(fontsize = 20, fontface = "bold")))
+dev.off()
 ```
 
 ```{r calculate traits - total pop}
-# FLEA POPULATION TRAITS - calculate relevant traits 
-
-## values for one simulation
-### Total Flea Population: the count of fleas during the entire simulation run 
-
-#### Function to calculate total flea population from immigration & birth events
-calculate_flea_population <- function(simulation_list) {
-  sapply(simulation_list, function(sim_df) {
-    sum(sim_df$event_type == "immigration") + sum(sim_df$event_type == "birth")
-  })
-}
-
-#### Apply function to all models
-flea_total_pop_lists <- lapply(all_simulations, calculate_flea_population)
 
 #### Plot histograms for each model as facet
 par(mfrow = c(2, 2))  # Arrange plots in a 2x2 grid
