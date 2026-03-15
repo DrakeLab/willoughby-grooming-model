@@ -828,7 +828,7 @@ sample_snapshots_one_pop <- function(simulation_list, sample_days, i) {
 }
 
 # load sim_pop if needed 
-simulation_pop <- load("data/simulation_pop.Rdata")
+# simulation_pop <- load("data/simulation_pop.Rdata")
 # create a list of the sampled day values per pop sim 
 pop_sampled_burden_list <- lapply(
   seq_along(simulation_pop),
@@ -1215,50 +1215,4 @@ grid.arrange(prev_plot_at_nl, abund_plot_at_nl, intense_plot_at_nl, k_plot_at, n
              bottom = grid::textGrob("resource availability",
                                gp = grid::gpar(fontsize = 20, fontface = "bold")))
 dev.off()
-```
-
-
-```{r SCRAP}
-
-#### Plot histograms for each model as facet
-par(mfrow = c(2, 2))  # Arrange plots in a 2x2 grid
-for (i in seq_along(flea_total_pop_lists)) {
-  hist(flea_total_pop_lists[[i]], 
-       main = paste("Total Flea Pop -", names(flea_total_pop_lists)[i]), 
-       xlab = "Total Fleas", 
-       col = "lightblue", 
-       border = "black")
-}
-par(mfrow = c(1,1))  # Reset plot layout
-
-#### Convert list to long-format dataframe for ggplot
-flea_data <- bind_rows(
-  lapply(names(flea_total_pop_lists), function(model) {
-    data.frame(Total_Fleas = flea_total_pop_lists[[model]], Model = model)
-  })
-)
-
-#### Plot histogram using ggplot2 for each model as overlapping on same grid
-ggplot(flea_data, aes(x = Total_Fleas, fill = Model)) +
-  geom_histogram(aes(y = ..density..), position = "identity", alpha = 0.4, bins = 30) +
-  scale_fill_manual(values = c("#E69F00", "#56B4E9","grey", "darkmagenta")) +  # Custom colors
-  labs(title = "Total Flea Population Across Simulations",
-       x = "Total Fleas from Immigration & Birth",
-       y = "Density") +
-  theme_minimal()
-
-# plot the histogram 
-# hist(sim0_eod_pop_last75[[1]]$population)
-ggplot(eod_pop_last75, aes(x = population, group = sim_id, color = model)) +
- # geom_freqpoly(binwidth = 10, size = 1, alpha = 0.5) +  # stepbins like a histogram
-  geom_histogram(alpha = 0.2, aes(y = ..ncount..), position = 'identity', bins = 10) + 
- # geom_bar(pos="dodge") +
-  scale_x_continuous(limits = c(0, 50)) +
- # scale_y_continuous(limits = c(0, 0.15)) +
-  labs(title = "Distribution of Population Sizes for last 75% of simulation (n = 541 time points) ",
-       x = "Population Size",
-       y = "Frequency") +
-  theme_classic() + 
- facet_grid(model ~ .)
-
 ```
