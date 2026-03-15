@@ -97,7 +97,7 @@ deathrate_dd <- function(pop.size, dmax = 1, x_mid = 50, s = 20) {
 ## we are going to vary parameters for:  
 theta_vals <- seq(0, 10, by = 1) # 10 different values
 iota_vals <- seq(0, 0.5, by = 0.05) # 10 different values
-scenario_vals <- seq(1,100, by = 10) # 10 different values (no grooming is an explicit scenario) 
+scenario_vals <- seq(1,100, by = 1) # 100 different values (no grooming is an explicit scenario) 
 
 # construct full matrix of theta and iota options 
 ti_axes <- expand.grid(
@@ -135,7 +135,7 @@ We start with some hyperparameters of the simulation.
 
 ```{r set some simulation rules}
 # Individual Experiment 
-num_simulations <- 100  # Number of times to run the simulation
+num_simulations <- 10  # Number of times to run the simulation
 # max.events <- 1000 # maximum events
 max.time <- 730 # 2 year max for a squirrel  
 ```
@@ -252,12 +252,9 @@ system.time({
 
   on.exit(stopCluster(cl), add = TRUE)
 })
-#saveRDS(simulation, "data/simulation_10rep.Rdata")
-# saveRDS(simulation, "data/simulation.Rdata")
 
 
-saveRDS(simulation, "data/simulation100.Rdata")
-
+saveRDS(simulation, "data/sim_100gs_10sims.Rdata")
 ```
 Now, I need a way to sample from these data.
 
@@ -341,7 +338,7 @@ summarize_simulations <- function(simulation_list) {
 
 # run for each simulation 
 system.time({
-  flea_stat_df <- summarize_simulations(sim100) # each simulation
+  flea_stat_df <- summarize_simulations(simulation) # each simulation
 }) 
 
 # summarize by parameters 
@@ -511,8 +508,8 @@ dev.off()
 ## convert so resources affects immigration same as grooming 
 # calculate appropriate 
 resource_pairs <- data.frame(
-  scenario = seq(1, 91, by = 10),
-  iota = seq(0.05, 0.5, by = 0.05)
+  scenario = c(1, 10,20,30,40,50,60,70,80,90,100),
+  iota = c(0, 0.05, 0.1, 0.15,0.2,0.25,0.3,0.35,0.4,0.45,0.5)
 )
 
 flea_stat_per_param_long_ri_link <- flea_stat_per_param_long %>%
@@ -529,8 +526,8 @@ flea_stat_per_param_long_ri_link$groom_strategy <- factor(flea_stat_per_param_lo
 # PLOT OF RESOURCE on individual metrics with immigration-grooming paired and Theta = 2
 ## total population 
 totpop_plot <- ggplot(flea_stat_per_param_long_ri_link[flea_stat_per_param_long_ri_link$theta==2 &
-                                        flea_stat_per_param_long_ri_link$metric == "ind_metric_total_pop",], 
-                      aes(x = scenario, y = value, group = groom_strategy, color = groom_strategy)) +
+                      flea_stat_per_param_long_ri_link$metric == "ind_metric_total_pop",], 
+                      aes(x = scenario, group = groom_strategy, y = value, color = groom_strategy)) +
   geom_line(size = 2) +
   facet_wrap(~groom_strategy, ncol = 1) +
   labs(x = "resource availability",
@@ -606,6 +603,7 @@ totpop_plot_at <- ggplot(flea_stat_per_param_long_ri_link[flea_stat_per_param_lo
                       aes(x = scenario, y = value, group = interaction(groom_strategy, theta), 
                           color = groom_strategy, alpha = theta)) +
   geom_line(size = 2) +
+  scale_x_continuous(limits = c(1,100)) +
   scale_alpha(range = c(0.4, 1)) +
   facet_wrap(~groom_strategy, ncol = 1) +
   labs(x = "resource availability",
@@ -725,8 +723,6 @@ sim_eod_pop_last75 <- lapply(eod_burden_list, subset_simulation, range_percent =
 #    sim_eod_pop_last75[[i]] %>% mutate(sim_id = as.factor(i))  # Assign simulation ID
 #  })
 # )
-
-
 ```
 
 ```{r population sim}
@@ -783,28 +779,60 @@ saveRDS(simulation_pop, "data/simulation_pop.Rdata")
 # create a list of time points to get the values 
 sample_days <- seq(949, 3449, by = 25) # last 75% of 10 years, every 25 days apart 
 
-## function to sample across the simulation
-sample_snapshots_one_pop <- function(sim_df, sample_days) {
+
+# update eod function for full simulation: 
+end_of_day_flea_pop_3650 <- function(sim){
   
-  pop_eod_burdens <- end_of_day_flea_pop(sim_df)
-  
-  pop_eod_burden_last75 <- subset_simulation(
-    pop_eod_burdens,
-    range_percent = c(26, 100)
+  init_row <- data.frame(  # pre load initial conditions simulations 
+    event = 0,
+    time = 0,
+    population = 1,
+    event_type = "initial",
+    sim_id = sim$sim_id[1],
+    param_id = sim$param_id[1]
   )
-  
-  pop_sampled_burden <- pop_eod_burden_last75[
-    pop_eod_burden_last75$time %in% sample_days, 
-  ]
-  
-  pop_sampled_burden
+
+  sim %>% # Apply operations to the dataset
+    bind_rows(init_row, .) %>%
+    mutate(time_unit = floor(time)) %>% # Convert time to integer units
+    group_by(time_unit) %>%
+    slice_tail(n = 1) %>% # Get the last observation per unit
+    ungroup() %>%
+    select(time_unit, population) %>% # Keep relevant columns
+    
+    # create full sequence
+    tidyr::complete(time_unit = 1:3650) %>%
+    
+    # carry previous value forward
+    tidyr::fill(population, .direction = "down") %>% 
+    dplyr::filter(time_unit >= 1, time_unit <= 3650) %>% # get rid of the initial seeding
+    pull(population) # only get a vector of the population sizes 
 }
 
+
+## function to sample across the simulation
+sample_snapshots_one_pop <- function(simulation_list, sample_days, i) {
+  
+    pop_eod_burdens <- end_of_day_flea_pop_3650(simulation_list[[i]])
+    
+    pop_eod_burden_list <-  list( # save list of the eod values for each sim 
+       sim_id = i,
+       eod_burdens = pop_eod_burdens)
+    
+    pop_eod_burdens_df <- data.frame(time_unit = c(1:3650), eod_burden = pop_eod_burdens)
+    
+    pop_eod_burden_last75 <- subset_simulation(pop_eod_burdens_df,
+                                               range_percent = c(26, 100))
+    pop_sampled_burden <- pop_eod_burden_last75[pop_eod_burden_last75$time_unit %in% sample_days, ]
+    pop_sampled_burden
+}
+
+# load sim_pop if needed 
+simulation_pop <- load("data/simulation_pop.Rdata")
 # create a list of the sampled day values per pop sim 
 pop_sampled_burden_list <- lapply(
-  simulation_pop,
-  sample_snapshots_one_pop,
-  sample_days = sample_days
+  seq_along(simulation_pop),
+  function(i) sample_snapshots_one_pop(simulation_pop, sample_days, i)
 )
 
 # Now summarize for these 100 samples 
@@ -816,34 +844,47 @@ summarize_pop_simulations <- function(simulation_list) {
     
     pop_sim_df <- simulation_list[[i]]
     
+    pop_metric_prev <- sum(pop_sim_df$eod_burden > 0)
+    pop_metric_abun <- sum(pop_sim_df$eod_burden) / 100
+    pop_metric_inte <- pop_metric_abun / pop_metric_prev
+      
+    mu <- mean(pop_sim_df$eod_burden)
+    v_sq <- var(pop_sim_df$eod_burden)^2
+    k <- mu^2 / (v_sq - mu)
+      
+    pop_metric_crowd <- mu + mu / k
+    pop_metric_patch <- 1 + 1 / k
+    
     data.frame(
       list_id = i,
-      sim_id = unique(pop_sim_df$sim_id)[1], # this should be the same... 
-      param_id = unique(pop_sim_df$param_id)[1],
-      pop_metric_prev =  sum(pop_sim_df$pop.size > 0),
-      pop_metric_abun = sum(pop_sim_df$pop.size) / 100, # calculate total parasites across all sampled snapshots
-      pop_metric_inte = pop_metric_abun /pop_metric_prev, # intensity 
-      mu <- mean(pop_sim_df$pop.size), # calculate mean burden
-      var <- var(pop_sim_df$pop.size), # calculate variance 
-      pop_metric_k <- mu^2 / (var - mu), # calculate k aggregation
-      pop_metric_crowd = mu + mu / k,
-      pop_metric_patch = 1 + 1/k # ratio of mean crowd to mean density (compares to random distribution)  
+      param_id = i,
+      pop_metric_prev = pop_metric_prev,
+      pop_metric_abun = pop_metric_abun,
+      pop_metric_inte = pop_metric_inte,
+      mu = mu,
+      v = sqrt(v_sq),
+      pop_metric_k = k,
+      pop_metric_crowd = pop_metric_crowd,
+      pop_metric_patch = pop_metric_patch
     )
-  })
+  }) 
   
   do.call(rbind, result)
 }
 
 # run for each simulation 
 system.time({
-  pop_stat_df <- summarize_pop_simulations(sim_pop) # each simulation
+  pop_stat_df <- summarize_pop_simulations(pop_sampled_burden_list) # each simulation
 }) 
 
 ```
 
 ```{r plot population measures across resource scenarios }
 # merge in parameters 
-pop_stat_per_param <- left_join(pop_stat_per_param, param_grid, by ="param_id")
+pop_stat_per_param <- left_join(pop_stat_df, param_grid, by ="param_id")
+
+# save the pop eod spaced burdens
+saveRDS(pop_stat_per_param, "data/sim_pop_metrics.Rdata")
 
 # lets look at no grooming for now: 
 ## filter to the no grooming
@@ -906,7 +947,7 @@ ggplot(pop_stat_per_param_long[pop_stat_per_param_long$iota == 0, ],
            color = groom_strategy, alpha = theta)) +
   geom_line(size = 2) +
   scale_alpha(range = c(0.4, 1)) +
-  facet_wrap(groom_strategy~metric, ncol = 4, nrow=4, scales = "free_y") +
+  facet_wrap(groom_strategy~metric, ncol = 4, nrow=6, scales = "free_y") +
   labs(x = "resource availability",
        y = "value") +
   theme_minimal()
@@ -932,7 +973,8 @@ prev_plot_ni_nl <- prev_plot_ni +
 
 ## average eod burden 
 abund_plot_ni <- ggplot(pop_stat_per_param_long[pop_stat_per_param_long$iota == 0 &
-                                                  pop_stat_per_param_long$metric == "pop_metric_avg_abund",], 
+                                                  pop_stat_per_param_long$metric ==
+                                                  "pop_metric_avg_abund",], 
                       aes(x = scenario, y = value, 
                           group = interaction(groom_strategy, theta), 
                           color = groom_strategy, alpha = theta)) +
@@ -1149,21 +1191,23 @@ intense_plot_at_nl <- intense_plot_at +
 ## k aggregation 
 k_plot_at <- ggplot(pop_stat_per_param_long_ri_link[pop_stat_per_param_long_ri_link$metric == 
                                                             "pop_metric_k",], 
-                      aes(x = scenario, y = k, 
+                      aes(x = scenario, y = value, 
                           group = interaction(groom_strategy,theta),  
                           color = groom_strategy, alpha = theta)) +
   geom_line(size = 2) +
   scale_alpha(range = c(0.4, 1)) +
+  scale_y_continuous(limits = c(0,5)) +
   facet_wrap(~groom_strategy, ncol = 1) +
   labs(x = "resource availability",
        y = "aggregation (k)") +
+  geom_line(y= 1) +
   theme_minimal()  +
   theme(strip.text.x = element_blank(), 
         axis.title.x = element_blank(),# use joint label instead
         axis.title.y = element_text(face = "bold", size =20),
         axis.text.x = element_text(size=14),
         axis.text.y= element_text(size=14))
-k_plot_at # check all good 
+k_plot_at  # check all good 
 
 # Save Plot 
 png(filename="figures/FigureX7_pop_metrics_ri-link.png", width = 16, height =8, unit = 'in', res = 300)
