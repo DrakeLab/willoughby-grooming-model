@@ -748,7 +748,7 @@ subset_simulation <- function(sim_df, range_percent) {
 }
 
 # limit population snapshots to latter 75% (eliminating burn-in period)
-sim_eod_pop_last75 <- lapply(eod_burden_list, subset_simulation, range_percent = c(26, 100))
+# sim_eod_pop_last75 <- lapply(eod_burden_list, subset_simulation, range_percent = c(26, 100))
 
 # Create master dataframe (likely not needed)
 # sim_eod_pop_last75_combined <- bind_rows(
@@ -919,12 +919,15 @@ pop_stat_per_param <- left_join(pop_stat_df, param_grid, by ="param_id")
 # save the pop eod spaced burdens
 saveRDS(pop_stat_per_param, "data/sim_pop_metrics.Rdata")
 
+# correct abundance to mean abundance 
+pop_stat_per_param$pop_metric_abun <- pop_stat_per_param$pop_metric_abun / 100
+
 # lets look at no grooming for now: 
 ## filter to the no grooming
 pop_stat_per_param_ng <- pop_stat_per_param %>% 
   dplyr::filter(groom_strategy=="none")
-## plot heatmap of total flea pop
-ggplot(pop_stat_per_param_ng, 
+## plot heatmap of prevalence
+prev_it_ng_plot <- ggplot(pop_stat_per_param_ng, 
        aes(x = theta, y = iota, fill = pop_metric_prev)) +
   geom_tile() +
   scale_y_continuous(breaks = seq(0, 0.5, by = 0.1)) +
@@ -937,6 +940,11 @@ ggplot(pop_stat_per_param_ng,
        y = "iota",
        fill = "prevalence") +
   theme_minimal()
+prev_it_ng_plot # check all good
+
+png(filename="figures/FigureX_ti_ng_prev.png", width = 16, height =8, unit = 'in', res = 300)
+prev_it_ng_plot
+dev.off()
 
 # now for a mid grooming scenarios (50) plot, faceted by different strategies 
 pop_stat_per_param_g51 <- pop_stat_per_param %>% 
@@ -947,7 +955,7 @@ pop_stat_per_param_g51$groom_strategy <- factor(pop_stat_per_param_g51$groom_str
                                                             "costly"))
                
 ## plot heatmap of prevalence
-ggplot(pop_stat_per_param_g51, 
+ti_midg_plot <- ggplot(pop_stat_per_param_g51, 
        aes(x = theta, y = iota, fill = pop_metric_prev)) +
   geom_tile() +
   facet_wrap(~groom_strategy, ncol = 1) +
@@ -962,6 +970,12 @@ ggplot(pop_stat_per_param_g51,
        fill = "prevalence") +
   theme_minimal()
 
+ti_midg_plot # check all good 
+
+png(filename="figures/FigureX_ti_midg_prev.png", width = 16, height =8, unit = 'in', res = 300)
+ti_midg_plot
+dev.off()
+
 # plot individual infestation traits by resource 
 ## convert into long data 
 pop_stat_per_param_long <- pop_stat_per_param %>%
@@ -971,10 +985,14 @@ pop_stat_per_param_long <- pop_stat_per_param %>%
 
 # confirm groom strategy factors 
 pop_stat_per_param_long$groom_strategy <- factor(pop_stat_per_param_long$groom_strategy,
-                                                  levels = c("none", "programmed", "stimulus", "costly"))
+                                                  levels = c("none", 
+                                                             "programmed", 
+                                                             "stimulus",
+                                                             "costly"))
 
 # plot individual metrics for only resource-induced changes to grooming, and no immigration 
-ggplot(pop_stat_per_param_long[pop_stat_per_param_long$iota == 0, ], 
+
+pop_met_rg_ni_plot <- ggplot(pop_stat_per_param_long[pop_stat_per_param_long$iota == 0, ], 
        aes(x = scenario, y = value, 
            group = interaction(groom_strategy, theta), 
            color = groom_strategy, alpha = theta)) +
@@ -984,6 +1002,47 @@ ggplot(pop_stat_per_param_long[pop_stat_per_param_long$iota == 0, ],
   labs(x = "resource availability",
        y = "value") +
   theme_minimal()
+pop_met_rg_ni_plot# check all good 
+
+png(filename="figures/FigureX_rg_ni_prev.png", width = 16, height =8, unit = 'in', res = 300)
+pop_met_rg_ni_plot 
+dev.off()
+
+# plot individual metrics for only resource-induced changes to grooming, and baseline immigration (0.2)
+
+pop_met_rg_bi_plot <- ggplot(pop_stat_per_param_long[pop_stat_per_param_long$iota == 0.2, ], 
+       aes(x = scenario, y = value, 
+           group = interaction(groom_strategy, theta), 
+           color = groom_strategy, alpha = theta)) +
+  geom_line(size = 2) +
+  scale_alpha(range = c(0.4, 1)) +
+  facet_wrap(metric ~groom_strategy, ncol = 4, nrow=6, scales = "free_y") +
+  labs(x = "resource availability",
+       y = "value") +
+  theme_minimal()
+
+pop_met_rg_bi_plot # check all good
+
+# # plot individual metrics for only resource-induced changes to grooming, and baseline immigration (0.2) and mid theta (2) 
+
+pop_met_rg_bimt_plot <- ggplot(pop_stat_per_param_long[pop_stat_per_param_long$iota == 0.2 &
+                                                       pop_stat_per_param_long$theta == 5, ], 
+       aes(x = scenario, y = value, 
+           color = groom_strategy)) +
+  geom_point(size = 2) +
+  facet_wrap(metric~groom_strategy, ncol = 4, nrow=6, scales = "free_y") +
+  labs(x = "resource availability",
+       y = "value") +
+  theme_minimal()
+
+pop_met_rg_bimt_plot # check all good 
+
+# save plot 
+png(filename="figures/FigureX_rg_bimt_pop_metrics.png", width = 16, height =8, unit = 'in', res = 300)
+pop_met_rg_bimt_plot 
+dev.off()
+
+
 ## Plot separate panels for individual metrics for only resource-induced changes to grooming and no immigration
 prev_plot_ni <- ggplot(pop_stat_per_param_long[pop_stat_per_param_long$iota == 0 & 
                                                pop_stat_per_param_long$metric == "pop_metric_prev",], 
@@ -1081,13 +1140,13 @@ pop_stat_per_param_long_ri_link$groom_strategy <- factor(pop_stat_per_param_long
                                                                      "costly")) 
 # prepare individual metric plots 
 
-# PLOT OF RESOURCE on individual metrics with immigration-grooming paired and Theta = 2
+# PLOT OF RESOURCE on individual metrics with immigration-grooming paired and Theta = 5
 ## total population 
-prev_plot <- ggplot(pop_stat_per_param_long_ri_link[pop_stat_per_param_long_ri_link$theta==2 &
+prev_plot <- ggplot(pop_stat_per_param_long_ri_link[pop_stat_per_param_long_ri_link$theta==7 &
                                         pop_stat_per_param_long_ri_link$metric == "pop_metric_prev",], 
                       aes(x = scenario, y = value, group = groom_strategy, color = groom_strategy)) +
   geom_line(size = 2) +
-  facet_wrap(~groom_strategy, ncol = 1) +
+  facet_wrap(~groom_strategy, ncol = 4) +
   labs(x = "resource availability",
        y = "prevalence") +
   theme_minimal()  +
@@ -1100,14 +1159,14 @@ prev_plot_nl <- prev_plot +
         axis.title.x = element_blank()) # use joint label instead
 
 ## average eod burden 
-abund_plot <- ggplot(pop_stat_per_param_long_ri_link[pop_stat_per_param_long_ri_link$theta==2 &
+abund_plot <- ggplot(pop_stat_per_param_long_ri_link[pop_stat_per_param_long_ri_link$theta==7 &
                                                     pop_stat_per_param_long_ri_link$metric == 
                                                             "pop_metric_abun",], 
                       aes(x = scenario, y = value, group = groom_strategy, color = groom_strategy)) +
   geom_line(size = 2) +
-  facet_wrap(~groom_strategy, ncol = 1) +
+  facet_wrap(~groom_strategy, ncol = 4) +
   labs(x = "resource availability",
-       y = "mean daily burden") +
+       y = "mean abundance") +
   theme_minimal()  +
   theme(strip.text.x = element_blank())
 abund_plot
@@ -1118,14 +1177,14 @@ abund_plot_nl <- abund_plot +
         axis.title.x = element_blank()) # use joint label instead
 
 ## INTENSITY  
-intense_plot <- ggplot(pop_stat_per_param_long_ri_link[pop_stat_per_param_long_ri_link$theta==2 &
+intense_plot <- ggplot(pop_stat_per_param_long_ri_link[pop_stat_per_param_long_ri_link$theta==7 &
                                                        pop_stat_per_param_long_ri_link$metric == 
                                                             "pop_metric_inte",], 
                       aes(x = scenario, y = value, group = groom_strategy, color = groom_strategy)) +
   geom_line(size = 2) +
-  facet_wrap(~groom_strategy, ncol = 1) +
+  facet_wrap(~groom_strategy, ncol = 4) +
   labs(x = "resource availability",
-       y = "intensity") +
+       y = "mean intensity") +
   theme_minimal()  +
   theme(strip.text.x = element_blank())
 intense_plot
@@ -1136,13 +1195,18 @@ intense_plot_nl <- intense_plot +
         legend.position = "none")
   
 ## Aggregation k 
-k_plot <- ggplot(pop_stat_per_param_long_ri_link[pop_stat_per_param_long_ri_link$theta==2 &
+k_plot <- ggplot(pop_stat_per_param_long_ri_link[pop_stat_per_param_long_ri_link$theta==7 &
                                                  pop_stat_per_param_long_ri_link$metric == 
                                                             "pop_metric_k",], 
                       aes(x = scenario, y = round(value/780*100,2), 
                           group = groom_strategy, color = groom_strategy)) +
   geom_line(size = 2) +
-  facet_wrap(~groom_strategy, ncol = 1) +
+  
+  facet_wrap(~groom_strategy, ncol = 4) +
+  geom_line(y= 1, color = "black") +
+  geom_line(y= 0, color = "grey") +
+  geom_line(y= 20, color = "grey") +
+  scale_y_continuous(limits = c(0,20)) +
   labs(x = "resource availability",
        y = "aggregation (k)") +
   theme_minimal()  +
@@ -1150,9 +1214,11 @@ k_plot <- ggplot(pop_stat_per_param_long_ri_link[pop_stat_per_param_long_ri_link
         axis.title.x = element_blank()) # use joint label instead
 k_plot # check all good 
 
-# Multipanel plot for one theta value (2)
-grid.arrange(prev_plot_nl, abund_plot_nl , intense_plot_nl, k_plot, nrow = 1,
+# Multipanel plot for one theta value (5)
+png(filename="figures/FigureX_pop_metrics_rgi_t7.png", width = 16, height =8, unit = 'in', res = 300)
+grid.arrange(prev_plot_nl, abund_plot_nl , intense_plot_nl, k_plot, nrow = 4,
              bottom = "resource availability")
+dev.off()
 
 # PLOT OF RESOURCE on individual metrics with immigration-grooming paired with variable Theta
 ## total population for all thetas
@@ -1162,7 +1228,7 @@ prev_plot_at <- ggplot(pop_stat_per_param_long_ri_link[pop_stat_per_param_long_r
                           color = groom_strategy, alpha = theta)) +
   geom_line(size = 2) +
   scale_alpha(range = c(0.4, 1)) +
-  facet_wrap(~groom_strategy, ncol = 1) +
+  facet_wrap(~groom_strategy, ncol = 4) +
   labs(x = "resource availability",
        y = "prevalence") +
   theme_minimal()  +
@@ -1184,9 +1250,9 @@ abund_plot_at <- ggplot(pop_stat_per_param_long_ri_link[pop_stat_per_param_long_
                           color = groom_strategy, alpha = theta)) +
   geom_line(size = 2) +
   scale_alpha(range = c(0.4, 1)) +
-  facet_wrap(~groom_strategy, ncol = 1) +
+  facet_wrap(~groom_strategy, ncol = 4) +
   labs(x = "resource availability",
-       y = "abundance") +
+       y = "mean abundance") +
   theme_minimal()  +
   theme(strip.text.x = element_blank())
 abund_plot_at
@@ -1206,9 +1272,9 @@ intense_plot_at <- ggplot(pop_stat_per_param_long_ri_link[pop_stat_per_param_lon
                           color = groom_strategy, alpha = theta)) +
   geom_line(size = 2) +
   scale_alpha(range = c(0.4, 1)) +
-  facet_wrap(~groom_strategy, ncol = 1) +
+  facet_wrap(~groom_strategy, ncol = 4) +
   labs(x = "resource availability",
-       y = "intensity") +
+       y = "mean intensity") +
   theme_minimal()  +
   theme(strip.text.x = element_blank())
 intense_plot_at
@@ -1230,10 +1296,12 @@ k_plot_at <- ggplot(pop_stat_per_param_long_ri_link[pop_stat_per_param_long_ri_l
   geom_line(size = 2) +
   scale_alpha(range = c(0.4, 1)) +
   scale_y_continuous(limits = c(0,5)) +
-  facet_wrap(~groom_strategy, ncol = 1) +
+  facet_wrap(~groom_strategy, ncol = 4) +
   labs(x = "resource availability",
        y = "aggregation (k)") +
-  geom_line(y= 1) +
+  geom_line(y= 1, color = "black") +
+  geom_line(y= 0, color = "grey") +
+  geom_line(y= 20, color = "grey") +
   theme_minimal()  +
   theme(strip.text.x = element_blank(), 
         axis.title.x = element_blank(),# use joint label instead
@@ -1244,8 +1312,33 @@ k_plot_at  # check all good
 
 # Save Plot 
 png(filename="figures/FigureX7_pop_metrics_ri-link.png", width = 16, height =8, unit = 'in', res = 300)
-grid.arrange(prev_plot_at_nl, abund_plot_at_nl, intense_plot_at_nl, k_plot_at, nrow = 1,
+grid.arrange(prev_plot_at_nl, abund_plot_at_nl, intense_plot_at_nl, k_plot_at, nrow = 4,
              bottom = grid::textGrob("resource availability",
                                gp = grid::gpar(fontsize = 20, fontface = "bold")))
 dev.off()
+
+# Lets focus on just costly and stimulus, as they appear to only have suitable k variation, limit theta 
+k_plot_at_sc_3t <- ggplot(pop_stat_per_param_long_ri_link[
+  pop_stat_per_param_long_ri_link$metric == "pop_metric_k" &
+  pop_stat_per_param_long_ri_link$groom_strategy %in% c("stimulus", "programmed") &
+  pop_stat_per_param_long_ri_link$theta == 7,], 
+                      aes(x = scenario, y = value, 
+                          group = interaction(groom_strategy,theta),  
+                          color = groom_strategy, alpha = theta)) +
+  geom_point(size = 2) +
+  scale_alpha(range = c(0.4, 1)) +
+  scale_y_continuous(limits = c(0,5)) +
+  facet_wrap(~groom_strategy, ncol = 2) +
+  labs(x = "resource availability",
+       y = "aggregation (k)") +
+  geom_line(y= 1, color = "black") +
+  geom_line(y= 0, color = "grey") +
+  geom_line(y= 20, color = "grey") +
+  theme_minimal()  +
+  theme(strip.text.x = element_blank(), 
+        axis.title.x = element_blank(),# use joint label instead
+        axis.title.y = element_text(face = "bold", size =20),
+        axis.text.x = element_text(size=14),
+        axis.text.y= element_text(size=14))
+k_plot_at_sc_3t 
 ```
