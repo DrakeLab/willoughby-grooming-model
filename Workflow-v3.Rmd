@@ -64,9 +64,13 @@ groomrate_stm <- function(pop.size, scenario){
 }
 
 ### Costly
-groom_cst_scenarios <- data.frame(scenario = 1:100,
-                                  mu = seq(1, 100, by =1),
-                                  sigma = rep(25))
+n_scen <-  100
+# max grooming of 80 per day 
+groom_cst_scenarios <- data.frame(
+  scenario = 1:n_scen,
+  mu = seq(10, 80, length.out = n_scen),
+  sigma = seq(2, 20, length.out = n_scen)
+) # max var of 20 sigma
 
 #### Generate a function for costly grooming deathrate based on pop size 
 groomrate_cst <- function(pop.size, scenario){
@@ -353,6 +357,9 @@ flea_stat_per_param <- flea_stat_df %>%
 param_grid$param_id <-  seq_along(tig_axes[,1])
 flea_stat_per_param <- left_join(flea_stat_per_param, param_grid, by ="param_id")
 
+# Save output 
+write.csv(flea_stat_per_param, file ="data/exp1_output.csv")
+
 # lets look at no grooming for now: 
 ## filter to the no grooming
 flea_stat_per_param_ng <- flea_stat_per_param %>% 
@@ -380,8 +387,9 @@ flea_stat_per_param_g51$groom_strategy <- factor(flea_stat_per_param_g51$groom_s
                                                  levels = c("none", "programmed", "stimulus",
                                                             "costly"))
                
-## plot heatmap of total flea pop
-ggplot(flea_stat_per_param_g51, 
+## plot heatmap of total flea pop w variable t and i, but intermediate groom
+
+intgroom_ti_heat <- ggplot(flea_stat_per_param_g51, 
        aes(x = theta, y = iota, fill = ind_metric_total_pop)) +
   geom_tile() +
   facet_wrap(~groom_strategy, ncol = 1) +
@@ -395,6 +403,10 @@ ggplot(flea_stat_per_param_g51,
        y = "iota",
        fill = "pop") +
   theme_minimal()
+
+png(filename="figures/FigureX3_midgroom-heat.png", width = 16, height =8, unit = 'in', res = 300)
+intgroom_ti_heat
+dev.off()
 
 # plot individual infestation traits by resource 
 ## convert into long data 
@@ -418,6 +430,25 @@ ggplot(flea_stat_per_param_long[flea_stat_per_param_long$iota == 0, ],
   labs(x = "resource availability",
        y = "value") +
   theme_minimal()
+
+# plot individual metrics for only resource-induced changes to grooming, and baseline immigration 
+rgroom_bi_plot <- ggplot(flea_stat_per_param_long[flea_stat_per_param_long$iota == 0.2, ], 
+       aes(x = scenario, y = value, 
+           group = interaction(groom_strategy, theta), 
+           color = groom_strategy, alpha = theta)) +
+  geom_line(size = 2) +
+  scale_alpha(range = c(0.4, 1)) +
+  facet_wrap(groom_strategy~metric, ncol = 4, nrow=4, scales = "free_y") +
+  labs(x = "resource availability",
+       y = "value") +
+  theme_minimal()
+
+# save r-grooming w baseline immigration
+png(filename="figures/FigureX53_ind_metrics_rg-link_i02.png", width = 16, height =8, unit = 'in', res = 300)
+rgroom_bi_plot
+dev.off()
+
+
 ## Plot separate panels for individual metrics for only resource-induced changes to grooming and no immigration
 totpop_plot_ni <- ggplot(flea_stat_per_param_long[flea_stat_per_param_long$iota == 0 & 
                                                   flea_stat_per_param_long$metric == "ind_metric_total_pop",], 
@@ -593,8 +624,10 @@ inf_days_plot <- ggplot(flea_stat_per_param_long_ri_link[flea_stat_per_param_lon
 inf_days_plot # check all good 
 
 # Multipanel plot for one theta value (2)
+png(filename="figures/FigureX52_ind_metrics_ri-link_t2.png", width = 16, height =8, unit = 'in', res = 300)
 grid.arrange(totpop_plot_nl, dayburden_plot_nl , grooming_effort_plot_nl, inf_days_plot, nrow = 1,
              bottom = "resource availability")
+dev.off()
 
 # PLOT OF RESOURCE on individual metrics with immigration-grooming paired with variable Theta
 ## total population for all thetas
@@ -849,8 +882,8 @@ summarize_pop_simulations <- function(simulation_list) {
     pop_metric_inte <- pop_metric_abun / pop_metric_prev
       
     mu <- mean(pop_sim_df$eod_burden)
-    v_sq <- var(pop_sim_df$eod_burden)^2
-    k <- mu^2 / (v_sq - mu)
+    v <- var(pop_sim_df$eod_burden)
+    k <- mu^2 / (v - mu)
       
     pop_metric_crowd <- mu + mu / k
     pop_metric_patch <- 1 + 1 / k
@@ -862,7 +895,7 @@ summarize_pop_simulations <- function(simulation_list) {
       pop_metric_abun = pop_metric_abun,
       pop_metric_inte = pop_metric_inte,
       mu = mu,
-      v = sqrt(v_sq),
+      v = v,
       pop_metric_k = k,
       pop_metric_crowd = pop_metric_crowd,
       pop_metric_patch = pop_metric_patch
