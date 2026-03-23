@@ -34,17 +34,17 @@ death_stimulus <- function(x, d0 = 0, dmax = 1, perG  = 0.75) {
 }
 
 ## costly, stimulus driven to a certain point, but then there is a cost 
-death_costly <- function(x, max = 1, mu = 10, sigma = 10) {
-  max * exp(-((x - mu)^2) / (2 * sigma^2))
-}
+# death_costly <- function(x, max = 1, mu = 10, sigma = 10) {
+#  max * exp(-((x - mu)^2) / (2 * sigma^2))
+#}
 
 # Evaluate each function
 df <- data.frame(
   x = x,
   none = death_none(x),
   programmed = death_programmed(x),
-  stimulus = death_stimulus(x),
-  costly = death_costly(x)
+  stimulus = death_stimulus(x)#,
+  #costly = death_costly(x)
 )
 
 
@@ -234,7 +234,7 @@ cost_scenarios_ny <- cost_scenarios +
 
 # plot all three scenarios next to eachother 
 png(filename="figures/groom_scenarios.png", width = 7.5, height =3, unit = 'in', res = 300)
-grid.arrange(prog_scenarios_nl, stim_scenarios_nl_ny, cost_scenarios_ny, nrow = 1)
+grid.arrange(prog_scenarios_nl, stim_scenarios_nl_ny, nrow = 1)
 dev.off()
 ```
 
@@ -247,8 +247,8 @@ prog_scenarios_Res <- ggplot(grid_prog[grid_prog$scenario %in% plot_scenarios, ]
     colours = c("gray70", viridis::viridis(255, option = "inferno", direction = -1)),
     values  = scales::rescale(c(0, 100)),
     limits  = c(0, 100),
-    breaks  = c(0, 100),
-    labels = c("Low","High"), 
+    breaks  = c(0, 50, 100),
+    labels = c("Low","Mid","High"), 
     name = expression(bold("Resources")),
     guide = guide_colorbar(
       barheight = unit(0.4, "in"))) +   # shorter legend
@@ -342,7 +342,8 @@ cost_scenarios_Res_ny_nl <- cost_scenarios_Res +
 
 # plot all three scenarios next to eachother 
 png(filename="figures/groom_scenarios2.png", width = 7.5, height =3, unit = 'in', res = 300)
-grid.arrange(prog_scenarios_Res, stim_scenarios_Res_nl_ny, cost_scenarios_Res_ny_nl, nrow = 1)
+grid.arrange(prog_scenarios_Res, stim_scenarios_Res_nl_ny, #cost_scenarios_Res_ny_nl,
+             nrow = 1)
 dev.off()
 ```
 ```{r plot full growth formula}
@@ -362,22 +363,21 @@ immigrationrate <- function (x, iota) iota # function for immigration rate (iota
 ## Define all Grooming Scenarios: 
 ### PROGRAMMED 
 groom_prg_scenarios <- data.frame(scenario = seq(1, 100, length.out = 100), # 100 scenarios 
-                                  G_vals = seq(1, 300, length.out = 100)) # grooming efficiency
+                                  G_vals = seq(1, 100, length.out = 100)) # grooming efficiency
 #### Generate a function for grooming deathrate based on pop size 
-groomrate_prg <- function(pop.size, scenario){
-  groom_prg_scenario <- groom_prg_scenarios %>% dplyr::filter(scenario == scenario) # filter to scenario
-  death_rate <- pmin(pop.size, groom_prg_scenario[1,2]) # how much grooming will happen
+groomrate_prg <- function(pop.size, scenario_id){
+  death_rate <- pmin(pop.size, scenario_id)
+  death_rate
 }
-
 ### STIMULUS
 groom_stm_scenarios <- data.frame(scenario = seq(1, 100, length.out = 100), # 100 scenarios 
                                   G_vals = seq(1, 100, length.out = 100)) # grooming efficiency
 groom_stm_scenarios$groom_rate <- groom_stm_scenarios$G_vals / 100
   
 #### Generate a function for stimulus grooming deathrate based on pop size 
-groomrate_stm <- function(pop.size, scenario){
+groomrate_stm <- function(pop.size, scenario_id){
   death_rate <- ifelse(pop.size == 0, 0, # avoids NaNs
-                       pop.size*groom_stm_scenarios[scenario,3])
+                       pop.size*groom_stm_scenarios[scenario_id,3])
   death_rate
 }
 
@@ -400,12 +400,14 @@ groomrate_cst <- function(pop.size, scenario){
 }
 
 # Function to select a groom strategy based on defined parameter: 
-get_groom_rate <- function(x, groom_strategy, scenario) {
-  
- ifelse(groom_strategy == "none", 0,
- ifelse(groom_strategy == "programmed", groomrate_prg(x, scenario),
- ifelse(groom_strategy == "stimulus", groomrate_stm(x, scenario),
- ifelse(groom_strategy == "costly", groomrate_cst(x, scenario), "Unknown groom_type"))))
+get_groom_rate <- function(pop.size, groom_strategy, scenario) {
+  if (groom_strategy == "none") {
+    return(0)
+  } else if (groom_strategy == "programmed") {
+    return(groomrate_prg(pop.size, scenario))
+  } else if (groom_strategy == "stimulus") {
+    return(groomrate_stm(pop.size, scenario))
+  }
 }
 
 # Function for density dependent deaths 
@@ -429,7 +431,7 @@ ti_axes <- expand.grid(
 )
 
 # Expand parameter set to include each grooming scenario 
-groom_strategies <- c("none", "programmed", "stimulus", "costly")
+groom_strategies <- c("none", "programmed", "stimulus")
 tig_axes <- merge(ti_axes,
                   data.frame(groom_strategy = groom_strategies),
                              by = NULL)
@@ -452,7 +454,7 @@ for (i in seq_len(nrow(ecto.pop.rates))) {
   
   x_vals <- 1:100
   
-  gr1[[i]] <- birthrate(x_vals, log(78.75)/89/2, row.params$theta, 50) -
+  gr1[[i]] <- birthrate(x_vals, log(78.75)/89, row.params$theta, 50) -
     deathrate_dd(x_vals) -
     get_groom_rate(x_vals, row.params$groom_strategy, row.params$scenario) +
     immigrationrate(x_vals, row.params$iota)
@@ -466,18 +468,16 @@ ecto.pop.rates_long <- ecto.pop.rates %>%
   mutate(pop.size = rep(1:100, times = nrow(ecto.pop.rates)))
 
 # plot ecto pop rates (epr) by pop size 
-ecto.pop.rates_long$groom_strategy <- factor(ecto.pop.rates_long$groom_strategy, levels = 
-                                               c("none", "programmed", "stimulus", "costly"))
+ecto.pop.rates_long$groom_strategy <- factor(ecto.pop.rates_long$groom_strategy, levels = c("none", "programmed", "stimulus"))
 
-epr_plot <- ggplot(ecto.pop.rates_long[ecto.pop.rates_long$theta == 6 & 
-                                       ecto.pop.rates_long$iota == 0.05 &
-                                       ecto.pop.rates_long$groom_strategy != "none", ], 
+epr_plot <- ggplot(ecto.pop.rates_long[ecto.pop.rates_long$theta == 6 &
+                                       ecto.pop.rates_long$iota == 0.5,], 
                          aes(x = pop.size, y = gr, 
                              group = scenario, color = scenario)) +
-  geom_line(size = 2) +
+  geom_line(size = 1) +
   facet_wrap(~groom_strategy) +
-  scale_y_continuous(limits = c(-2,8)) +
-  geom_line(y=0, color = "black") +
+  #scale_y_continuous(limits = c(-2,8)) +
+  geom_hline(yintercept=0, color = "black") +
    scale_color_gradientn(
     colours = c("gray70", viridis::viridis(255, option = "inferno", direction = -1)),
     values  = scales::rescale(c(1, 100)),
@@ -492,7 +492,7 @@ epr_plot <- ggplot(ecto.pop.rates_long[ecto.pop.rates_long$theta == 6 &
   ) +
   theme_classic() +
   theme(plot.title = element_text(hjust = 0.1,vjust = -10), 
-        legend.position = c(0.9, 0.8),
+        legend.position = c(0.1, 0.4),
         legend.justification = c(1, 1), 
         legend.background = element_rect(fill = NA, color = "black"),
         legend.box.background = element_rect(fill = NA, color = NA), 
@@ -502,8 +502,81 @@ epr_plot <- ggplot(ecto.pop.rates_long[ecto.pop.rates_long$theta == 6 &
 epr_plot 
 
 png(filename="figures/growth_rate_by_mgroom_t6i05.png", width = 7.5, height =3, unit = 'in', res = 300)
-epr_plot 
+
+grid.arrange(prog_scenarios_Res, stim_scenarios_Res_nl_ny, #cost_scenarios_Res_ny_nl,
+             epr_plot, nrow = 2, ncol = 2)
 dev.off()
 
 ```
 
+```{r immigration and grooming resources }
+immigrationrate <- function(x, iota_baseline, scenario_id){
+  r_scaled <- scenario_id / 100
+  iota_baseline + exp(2 * r_scaled)
+}
+
+# DEFINE DATA FRAME 
+ecto.pop.rates_wi <- tig_axes
+ecto.pop.rates_wi$iota = 0.02
+
+gr1_wi <- vector("list", nrow(ecto.pop.rates_wi))
+
+system.time({
+for (i in seq_len(nrow(ecto.pop.rates_wi))) {
+  
+  row.params <- as.list(ecto.pop.rates_wi[i, ])
+  
+  x_vals <- 1:100
+  
+  gr1_wi[[i]] <- birthrate(x_vals, log(78.75)/89, row.params$theta, 50) -
+    deathrate_dd(x_vals) -
+    get_groom_rate(x_vals, row.params$groom_strategy, row.params$scenario) +
+    immigrationrate(x_vals, row.params$iota, row.params$scenario)
+}
+  })
+
+# create a data frame 
+ecto.pop.rates_wi_long <- ecto.pop.rates_wi %>%
+  mutate(gr = gr1_wi) %>%
+  unnest(gr) %>%
+  mutate(pop.size = rep(1:100, times = nrow(ecto.pop.rates_wi)))
+
+# plot ecto pop rates (epr) by pop size 
+ecto.pop.rates_wi_long$groom_strategy <- factor(ecto.pop.rates_wi_long$groom_strategy, levels = c("none", "programmed", "stimulus"))
+
+epr_plot_wi <- ggplot(ecto.pop.rates_wi_long[ecto.pop.rates_wi_long$theta == 6,], 
+                         aes(x = pop.size, y = gr, 
+                             group = scenario, color = scenario)) +
+  geom_line(size = 1) +
+  facet_wrap(~groom_strategy) +
+  scale_y_continuous(limits = c(-100,30)) +
+  geom_hline(yintercept=0, color = "black") +
+   scale_color_gradientn(
+    colours = c("gray70", viridis::viridis(255, option = "inferno", direction = -1)),
+    values  = scales::rescale(c(1, 100)),
+    limits  = c(1, 100),
+    breaks  = c(1, 100),
+    labels = c("Low","High"), 
+    name    = "Resources") +
+  labs(
+    x = "ectoparasite population size",
+    y = "growth rate",
+   # title = expression(bold("a.") ~ " Programmed")
+  ) +
+  theme_classic() +
+  theme(plot.title = element_text(hjust = 0.1,vjust = -10), 
+        legend.position = c(0.1, 0.4),
+        legend.justification = c(1, 1), 
+        legend.background = element_rect(fill = NA, color = "black"),
+        legend.box.background = element_rect(fill = NA, color = NA), 
+        legend.text  = element_text(size = 6),
+        legend.title = element_text(size = 7)
+        )
+
+
+png(filename="figures/growth_rate_by_rg_ri_t6.png", width = 7.5, height =3, unit = 'in', res = 300)
+epr_plot_wi 
+dev.off()
+
+
+```
