@@ -1,0 +1,1453 @@
+---
+title: "Workflow-v2"
+author: "Anna Willoughby"
+date: "2025-05-22"
+output: pdf_document
+---
+
+```{r setup, include=TRUE}
+knitr::opts_chunk$set(echo = TRUE, cache=TRUE)
+library('deSolve') # solving ordinary differential equations
+library(dplyr) # data wrangling
+library(ggplot2) # pretty plots
+library(lhs) # latin hypercube sampling
+library(tidyr) # pipes
+library(parallel) # for running in parallel 
+library(gridExtra) # plotting multipanels 
+set.seed(1993)
+
+```
+
+## Model
+
+In this document we seek to use a birth-death-immigration process to model the number of ectoparasites on a host. A full description of the model is at https://github.com/DrakeLab/willoughby-grooming-model.
+
+We start by writing functions for the birth rate, death rate, and immigration rate.
+In all cases, we let the state variable ($x$) be the first parameter.
+We also set some default parameters to make things simpler later.
+
+
+```{r, functions}
+# function for birth rate with Allee effect (theta)
+birthrate <- function(x, b0, theta, K){
+  b <- b0*x*(x/(theta+x)) # baseline births with Allee
+  b_dd <- b*x*(1 - x/ K) # birth decreases at high densities
+  b_wA_dd <- pmax(0, b_dd)
+  b_wA_dd # birth rate with Allee and density dependence
+}
+
+# function for immigration rate (iota)
+# baseline iota, and resource linked increase
+immigrationrate <- function (x, iota_baseline, iota_r, scenario){ 
+  iota = iota_baseline*(1 + scenario * iota_r)   
+  iota
+}
+
+# function for programmed grooming 
+# mid-grooming at a baseline level when resources are at 50 
+groomrate_prg <- function(pop.size, groom_prg_bl, scenario_id){
+  death_rate <- pmin(pop.size, groom_prg_bl * scenario_id / 50)
+  death_rate
+}
+
+# function for stimulus grooming deathrate based on pop size 
+# mid-grooming at a baseline level when resources are at 50 
+groomrate_stm <- function(pop.size, groom_stim_bl, scenario_id){
+  death_rate <- pop.size*( (groom_stim_bl * (scenario_id / 50)) /100)
+  death_rate
+}
+
+# Function to get cumulative groom rate from programmed and stimulus grooming 
+get_groom_rate <- function(pop.size, groom_prg_bl, groom_stim_bl, scenario_id) {
+  prg_rate = groomrate_prg(pop.size, groom_prg_bl, scenario_id)
+  stm_rate = groomrate_stm(pop.size, groom_stim_bl, scenario_id) 
+  groom_rate =  pmin(pop.size, prg_rate + stm_rate)
+  groom_rate
+}
+
+
+# Function for density dependent deaths 
+deathrate_dd <- function(pop.size, dmax = 1, x_mid = 50, s = 20) {
+     dmax / (1 + exp(-(pop.size - x_mid) / s))
+}
+
+# set initial conditions parameters
+
+## birth rate is standard across all scenarios, right now as 37.5 flea births per year (0. per day)
+## we are going to vary parameters for:  
+# theta_vals <- seq(0, 10, by = 1) # 10 different values
+
+# iota_bl_vals <- seq(0, 0.5, by = 0.1) # Keep for all the same 
+# iota_r_vals <- seq(0, 0.5, by = 0.05) # 10 different values
+scenario_vals <- seq(1,100, by = 1) # 100 different values (no grooming is an explicit scenario) 
+groom_prg_bl_vals <- c(0,20) # grooming baseline [two scenarios: no programmed or baseline of 20]
+groom_stim_bl_vals <- c(0, 20) # grooming baseline  [two scenarios: no stimulus or baseline of 20]
+
+# construct full matrix of theta and iota options 
+ti_axes <- expand.grid(
+  #theta = theta_vals, # for now doing one theta value
+  #iota_baseline = iota_bl_vals,  # for now doing one iota_baseline value
+  #iota_r = iota_r_vals,  # for now doing one iota resource link value
+  scenario = scenario_vals, 
+  groom_prg_baseline = groom_prg_bl_vals, 
+  groom_stm_baseline = groom_stim_bl_vals 
+)
+
+# Construct parameter set
+param_grid <- ti_axes
+param_grid$b0 <- log(78.75)/89 # constant [log(female fecundity per lifetime)/generation time]
+param_grid$initial_pop <- 1
+param_grid$theta <- 8
+param_grid$iota_baseline <- 0.5
+param_grid$iota_r <- 0.2
+```
+
+
+## Stochastic Model
+
+Now, we want to simulate a birth-death-immigration process.
+We start with some hyperparameters of the simulation.
+
+```{r set some simulation rules}
+# Individual Experiment 
+num_simulations <- 100  # Number of times to run the simulation
+# max.events <- 1000 # maximum events
+max.time <- 730 # 2 year max for a squirrel  
+
+```
+
+Here we simulate the process
+
+```{r run stochastic models}
+
+# Define the task grid: 
+task_grid <- expand.grid(
+    param_id = 1:nrow(param_grid),
+    sim_id  = 1:num_simulations)
+ 
+# Define running the whole model as a function 
+run_one_parameter_set <- function(task_i){
+
+    param_id <- task_grid[task_i, 1]
+    sim_id   <- task_grid[task_i, 2]
+    
+    message("Parameter set ", param_id, ", Simulation", sim_id)
+    
+    parms <- param_grid[param_id, ]
+
+    events <- 0
+    time <- 0
+    x <- parms$initial_pop
+
+    out_list <- list()
+
+    while (time[length(time)] <= max.time) {
+
+      events <- events + 1
+      current.size <- x[length(x)]
+      current.time <- time[length(time)]
+
+      b <- birthrate(current.size, parms$b0, parms$theta, 50) # 50 as K
+      g <- get_groom_rate(current.size, 
+                   parms$groom_prg_baseline,
+                   parms$groom_stm_baseline, 
+                   parms$scenario)
+      #message("Current size", current.size, ", groom rate", g) # mid function checks
+      d <- deathrate_dd(current.size) 
+      iota <- immigrationrate(current.size, 
+                    parms$iota_baseline, parms$iota_r, 
+                    parms$scenario)
+
+      total.rate <- b + g + d + iota
+
+      if (is.na(total.rate) || total.rate <= 0) break
+
+      increment.time <- -log(1 - runif(1)) / total.rate
+
+      event_probs <- c(d, g, b, iota) / total.rate
+      event_outcome <- sample(
+        c("death","groomed","birth", "immigration"),
+        size = 1,
+        prob = event_probs
+      )
+
+      change <- ifelse(event_outcome %in% c("death", "groomed"), -1, 1)
+
+      new_size <- max(0, current.size + change)
+      new_time <- current.time + increment.time
+
+      out_list[[events]] <- data.frame(
+        event = events,
+        time = new_time,
+        population = new_size,
+        event_type = event_outcome,
+        sim_id = sim_id,
+        param_id = param_id
+      )
+
+      time <- c(time, new_time)
+      x <- c(x, new_size)
+    }
+
+    if (length(out_list) == 0) {
+      data.frame(
+        event = numeric(),
+        time = numeric(),
+        population = numeric(),
+        event_type = character(),
+        sim_id = numeric(),
+        param_id = numeric()
+      )
+    } else {
+      do.call(rbind, out_list)
+    }}
+
+# Now run for the full simulation across the 10 clusters 
+
+  
+# Now run for the full simulation across the 10 clusters 
+system.time({
+
+  cl <- makeCluster(10)
+  
+  # Move libraries to the clusters 
+  clusterEvalQ(cl, library(tidyverse))
+
+  # Move main environment items to each of the clusters
+  clusterExport(cl, 
+                c("param_grid","max.time", "task_grid", 
+                   "birthrate", "deathrate_dd", "immigrationrate",
+                  "get_groom_rate", "groomrate_prg", "groomrate_stm"
+                  ))
+  
+  simulation <- parLapply(cl, 1:nrow(task_grid), run_one_parameter_set)
+
+  on.exit(stopCluster(cl), add = TRUE)
+})
+
+saveRDS(simulation, "data/theta_rig_links/sim_t7_rig_bi02_br04.Rdata")
+# rename param grid
+output_params <- param_grid
+# create id col 
+output_params$param_id = 1:nrow(output_params)
+# merge task grid and params 
+output_params <- left_join(task_grid, output_params, by = "param_id")
+# save the task_grid 
+write.csv(task_grid, file = "data/theta_rig_links/task_grid_t7_rig.csv")
+
+```
+```{r plot simulation time series for midgrooming scenarios}
+# Plot example time series 
+# Load simulation if needed
+# system.time({
+# simulation <- readRDS("data/sim_100gs_10sims.Rdata")
+# })
+
+# Create param id on the parameters df for linking to each simulation 
+param_grid$param_id = 1:nrow(param_grid)
+
+system.time({
+sim_unlisted <- data.table::rbindlist(simulation)
+})
+
+# Link parameters to each simulation 
+system.time({
+sim_unlisted_wp <- left_join(sim_unlisted, param_grid, by = "param_id")
+})
+
+# resave levels 
+sim_unlisted_wp$groom_strategy <- factor(sim_unlisted_wp$groom_strategy, levels = 
+                                           c("none", "programmed", "stimulus"))
+
+# Plot simulation over a lifetime 
+sim_lt_plot <- ggplot(sim_unlisted_wp[sim_unlisted_wp$scenario == 20,],
+                       aes(x = time, y = population, color = groom_strategy,
+                           group = interaction(param_id, sim_id))) +
+  geom_line(alpha = 0.75, linewidth = 0.8) +
+  #geom_hline(yintercept = mean(sim754$theta), 
+ #            linetype = "dashed", color = "grey40", linewidth = 0.5) +
+  facet_wrap(~groom_strategy, ncol = 1, scales = "free") +
+  #scale_color_manual(values = strategy_colors) +
+  labs(
+    title    = "Flea population dynamics by grooming strategy",
+    x = "Day", y = "Ectoparasite population size", color = "Grooming Strategy"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "none",
+        strip.text = element_text(face = "bold", size = 12))
+# check all good 
+sim_lt_plot 
+
+# Save plot 
+png(filename="figures/Figure3_lt_20gs_rig_t6.png", width = 16, height =8, unit = 'in', res = 300)
+sim_lt_plot
+dev.off()
+
+
+
+```
+
+
+
+Now, I need a way to sample from these data.
+
+```{r calculate traits - total pop}
+# read in simulation data 
+# sim10 <- readRDS("data/simulation_10rep.Rdata")
+# sim <- readRDS("data/simulation.Rdata")
+# sim100 <- readRDS("data/simulation100.Rdata")
+
+
+# optional flatten to dataframe
+# results_sim10 <-  do.call(rbind, sim10)
+# results_sim10$id <- paste(results_sim10$param_id, "-", results_sim10$sim_id, sep = "")
+
+# create functions to calculate output values 
+
+# FLEA POPULATION TRAITS - calculate relevant traits 
+## Snapshot/Sampling Event: the count of fleas at one snapshot (e.g., end of day)
+
+# function to calculate daily snapshot 
+
+end_of_day_flea_pop <- function(sim){
+  
+  init_row <- data.frame(  # pre load initial conditions simulations 
+    event = 0,
+    time = 0,
+    population = 1,
+    event_type = "initial",
+    sim_id = sim$sim_id[1],
+    param_id = sim$param_id[1]
+  )
+
+  sim %>% # Apply operations to the dataset
+    bind_rows(init_row, .) %>%
+    mutate(time_unit = floor(time)) %>% # Convert time to integer units
+    group_by(time_unit) %>%
+    slice_tail(n = 1) %>% # Get the last observation per unit
+    ungroup() %>%
+    select(time_unit, population) %>% # Keep relevant columns
+    
+    # create full sequence
+    tidyr::complete(time_unit = 0:780) %>%
+    
+    # carry previous value forward
+    tidyr::fill(population, .direction = "down") %>% 
+    dplyr::filter(time_unit != 0) %>% # get rid of the initial seeding
+    pull(population) # only get a vector of the population sizes 
+}
+
+## values for one simulation
+
+summarize_simulations <- function(simulation_list) {
+  
+  result <- lapply(seq_along(simulation_list), function(i) {
+    
+    eod_burdens <- end_of_day_flea_pop(simulation_list[[i]])
+    
+     eod_burden_list <-  list( # save list of the eod values for each sim 
+       sim_id = i,
+       eod_burdens = eod_burdens)
+
+
+    sim_df <- simulation_list[[i]]
+    
+    
+    data.frame(
+      list_id = i,
+      sim_id = unique(sim_df$sim_id)[1],
+      param_id = unique(sim_df$param_id)[1],
+      ind_metric_total_pop = sum(sim_df$event_type == "immigration") + # calculate total pop.size
+                        sum(sim_df$event_type == "birth"),
+      ind_metric_total_groom = sum(sim_df$event_type == "groomed"), # calculate total flea groomed
+      
+      ind_metric_infest_days = sum(eod_burdens  > 0),
+      ind_metric_mean_daily_pop = mean(eod_burdens)
+    )
+  })
+  
+  do.call(rbind, result)
+}
+
+# run for each simulation 
+system.time({
+  flea_stat_df <- summarize_simulations(simulation) # each simulation
+}) 
+
+# summarize by parameters 
+flea_stat_per_param <- flea_stat_df %>% 
+  group_by(param_id, sim_id) %>% 
+  summarise(ind_metric_total_pop = mean(ind_metric_total_pop), 
+            ind_metric_total_grm = mean(ind_metric_total_groom), 
+            ind_metric_inf_days = mean(ind_metric_infest_days), 
+            ind_metric_avg_dy_burden = mean(ind_metric_mean_daily_pop))
+
+# merge in parameters 
+param_grid$param_id <-  seq_along(tig_axes[,1])
+flea_stat_per_param <- left_join(flea_stat_per_param, param_grid, by ="param_id")
+
+# Save output 
+write.csv(flea_stat_per_param, file ="data/exp1_output_gs_ri.csv")
+
+# If I need to read in the saved data 
+# flea_stat_per_param <- read.csv(file = "data/exp1_output.csv")
+# lets look at no grooming for now: 
+
+# now for a mid grooming scenarios (50) plot, faceted by different strategies 
+
+# plot individual infestation traits by resource 
+## convert into long data 
+
+flea_stat_per_param_long <- flea_stat_per_param %>%
+  pivot_longer(cols = starts_with("ind_metric_"), 
+                names_to = "metric",
+                values_to = "value") 
+
+# confirm groom strategy factors 
+flea_stat_per_param_long$groom_strategy <- factor(flea_stat_per_param_long$groom_strategy,
+        levels = c("none", "programmed", "stimulus"))
+
+# K as the sim value 
+flea_stat_per_param_k <- flea_stat_per_param_long %>%
+  dplyr::filter(metric == "ind_metric_avg_dy_burden") 
+
+flea_stat_per_paramsim_k <- flea_stat_per_param_k %>% 
+  group_by(param_id, groom_strategy, scenario) %>%
+  summarise(m = mean(value),
+            v = var(value))
+
+flea_stat_per_paramsim_k$k <- (flea_stat_per_paramsim_k$m)^2 / 
+  (flea_stat_per_paramsim_k$v - flea_stat_per_paramsim_k$m)
+
+ggplot(flea_stat_per_paramsim_k, aes(x = scenario, y = k)) + 
+  geom_line() +
+  facet_wrap(~groom_strategy)
+# Now Resources jointly impacts immigration and grooming 
+
+
+## convert so resources affects immigration same as grooming 
+# calculate appropriate 
+
+# confirm grooming strategy levels
+flea_stat_per_param_long_ri_link$groom_strategy <- factor(flea_stat_per_param_long_ri_link$groom_strategy,
+                                                          levels = c("none", 
+                                                                     "programmed", 
+                                                                     "stimulus")) 
+# prepare individual metric plots 
+
+# PLOT OF RESOURCE on individual metrics with immigration-grooming paired 
+## total population 
+totpop_plot <- ggplot(flea_stat_per_param_long[flea_stat_per_param_long$metric == "ind_metric_total_pop",], 
+                      aes(x = scenario, group = groom_strategy, y = value, color = groom_strategy)) +
+  geom_line(size = 2) +
+  facet_wrap(~groom_strategy, ncol = 4) +
+  labs(x = "resource availability",
+       y = "total population") +
+  theme_minimal()  +
+  theme(strip.text.x = element_blank())
+totpop_plot
+
+# remove legend for multi-panel plot: 
+totpop_plot_nl <- totpop_plot +
+  theme(legend.position = "none",
+        axis.title.x = element_blank()) # use joint label instead
+
+## average eod burden 
+dayburden_plot <- ggplot(flea_stat_per_param_long[flea_stat_per_param_long$metric == 
+                                                            "ind_metric_avg_dy_burden",], 
+                      aes(x = scenario, y = value, group = groom_strategy, color = groom_strategy)) +
+  geom_line(size = 2) +
+  facet_wrap(~groom_strategy, ncol = 3) +
+  labs(x = "resource availability",
+       y = "mean daily burden") +
+  theme_minimal()  +
+  theme(strip.text.x = element_blank())
+dayburden_plot
+
+# remove legend for multi-panel plot: 
+dayburden_plot_nl <- dayburden_plot +
+  theme(legend.position = "none", 
+        axis.title.x = element_blank()) # use joint label instead
+
+## total fleas groomed  
+grooming_effort_plot <- ggplot(flea_stat_per_param_long[                    flea_stat_per_param_long$metric == 
+                                                            "ind_metric_total_grm",], 
+                      aes(x = scenario, y = value, group = groom_strategy, color = groom_strategy)) +
+  geom_line(size = 2) +
+  facet_wrap(~groom_strategy, ncol = 4) +
+  labs(x = "resource availability",
+       y = "total groomed population") +
+  theme_minimal()  +
+  theme(strip.text.x = element_blank())
+grooming_effort_plot
+
+# remove legend for multi-panel plot: 
+grooming_effort_plot_nl <- grooming_effort_plot +
+  theme(axis.title.x = element_blank(), # use joint label instead 
+        legend.position = "none")
+  
+## infestation days 
+inf_days_plot <- ggplot(flea_stat_per_param_long[flea_stat_per_param_long$metric == 
+                                                            "ind_metric_inf_days",], 
+                      aes(x = scenario, y = round(value/780*100,2), 
+                          group = groom_strategy, color = groom_strategy)) +
+  geom_line(size = 2) +
+  facet_wrap(~groom_strategy, ncol = 4) +
+  labs(x = "resource availability",
+       y = "days with an infestation (%)") +
+  theme_minimal()  +
+  theme(strip.text.x = element_blank(), 
+        axis.title.x = element_blank(),
+         legend.position = "none") # use joint label instead
+inf_days_plot # check all good 
+
+# Multipanel plot for one theta value (2)
+png(filename="figures/FigureX_ind_metrics_rig_t6.png", width = 16, height =8, unit = 'in', res = 300)
+grid.arrange(totpop_plot_nl, dayburden_plot_nl , grooming_effort_plot_nl, inf_days_plot, 
+             nrow = 4,
+             bottom = "resource availability")
+dev.off()
+
+# Plot summary stats of this: 
+# -- Plot 2: Strategy means + IQR ribbons --
+flea_stat_df_sum <- left_join(flea_stat_df, param_grid, by = "param_id")
+summary_df <- flea_stat_df_sum |>
+  group_by(groom_strategy, param_id, scenario) |>
+  summarise( mean_daily_burden = mean(ind_metric_mean_daily_pop),
+            lo     = quantile(ind_metric_mean_daily_pop, 0.25),
+            hi     = quantile(ind_metric_mean_daily_pop, 0.75),
+            .groups = "drop")
+
+summary_mb <- ggplot(summary_df, 
+                     aes(x = scenario, color = groom_strategy, fill = groom_strategy)) +
+  geom_ribbon(aes(ymin = lo, ymax = hi, color = groom_strategy), alpha = 0.15) +
+  geom_line(aes(y = mean_daily_burden), linewidth = 1.1) +
+  labs(
+    title    = "Mean daily flea load ± IQR by grooming strategy",
+    x = "resources", y = "Mean daily flea count", color = "Strategy", fill = "Strategy"
+  ) +
+  theme_minimal(base_size = 13)
+summary_mb 
+
+
+```
+
+```{r subsetting the eod }
+
+# create a function to sample only a portion of the days (e.g. last 25%)
+subset_simulation <- function(sim_df, range_percent) {
+  # Ensure range_percent is a valid numeric vector of length 2 (e.g., c(0, 10) or c(75, 100))
+  if (length(range_percent) != 2 || any(range_percent < 0) || any(range_percent > 100)) {
+    stop("range_percent must be a numeric vector of length 2 between 0 and 100.")
+  }
+  
+  # Get the start and end time from the simulation
+  min_time <- min(sim_df$time_unit)
+  max_time <- max(sim_df$time_unit)
+
+  # Compute the time range corresponding to the percentage range
+  time_start <- min_time + (range_percent[1] / 100) * (max_time - min_time)
+  time_end <- min_time + (range_percent[2] / 100) * (max_time - min_time)
+
+  # Subset the dataframe based on the calculated time range
+  sim_df %>%
+    filter(time_unit >= time_start & time_unit <= time_end)
+}
+
+# limit population snapshots to latter 75% (eliminating burn-in period)
+# sim_eod_pop_last75 <- lapply(eod_burden_list, subset_simulation, range_percent = c(26, 100))
+
+# Create master dataframe (likely not needed)
+# sim_eod_pop_last75_combined <- bind_rows(
+#  lapply(seq_along(sim_eod_pop_last75), function(i) {
+#    sim_eod_pop_last75[[i]] %>% mutate(sim_id = as.factor(i))  # Assign simulation ID
+#  })
+# )
+```
+
+```{r population sim}
+# Population experiment 
+# overwrite for population
+num_simulations <- 1  # Number of times to run the simulation - this time just once very long
+max.time <- 3650 # 10 years -- > beyond on squirrel lifetime 
+# Define the task grid: 
+task_grid <- expand.grid(
+    param_id = 1:nrow(param_grid), # using same parameters
+    sim_id   = 1:num_simulations)
+
+# run the simulation for the population 
+system.time({
+
+  cl <- makeCluster(10)
+  
+  # Move libraries to the clusters 
+  clusterEvalQ(cl, library(tidyverse))
+
+  # Move main environment items to each of the clusters
+  clusterExport(cl, 
+                c("groom_prg_scenarios","groom_stm_scenarios", "groom_cst_scenarios",
+                   "param_grid","max.time", "task_grid", 
+                   "birthrate", "deathrate_dd", "immigrationrate", 
+                  "groom_strategies", "get_groom_rate", "groomrate_prg", "groomrate_stm", "groomrate_cst"
+                  ))
+  
+  simulation_pop <- parLapply(cl, 1:nrow(task_grid), run_one_parameter_set)
+
+  on.exit(stopCluster(cl), add = TRUE)
+})
+
+# save output 
+saveRDS(simulation_pop, "data/simulation_pop.Rdata")
+```
+
+
+```{r plot simulation time series for midgrooming scenarios}
+# Plot example time series 
+# Load simulation if needed
+# system.time({
+# sim_pop <- readRDS("data/simulation_pop.Rdata")
+# })
+
+# Create param id on the parameters df for linking to each simulation 
+param_grid$param_id = 1:nrow(param_grid)
+
+system.time({
+sim_pop_unlisted <- data.table::rbindlist(sim_pop)
+})
+
+
+# Link parameters to each simulation 
+system.time({
+sim_pop_unlisted_wp <- left_join(sim_pop_unlisted, param_grid, by = "param_id")
+})
+
+# resave levels 
+sim_pop_unlisted_wp$groom_strategy <- factor(sim_pop_unlisted_wp$groom_strategy, levels = 
+                                           c("none", "programmed", "stimulus", "costly"))
+
+# Plot simulation of population
+sim_pop_ex_plot <- ggplot(sim_pop_unlisted_wp[sim_pop_unlisted_wp$theta == 9 &
+                       sim_pop_unlisted_wp$scenario == 50 & 
+                       sim_pop_unlisted_wp$iota == 0.5 &  
+                       sim_pop_unlisted_wp$groom_strategy != "costly",],
+                       aes(x = time, y = population, color = groom_strategy,
+                           group = interaction(param_id, sim_id))) +
+  geom_line(alpha = 0.75, linewidth = 0.8) +
+  #geom_hline(yintercept = mean(sim754$theta), 
+ #            linetype = "dashed", color = "grey40", linewidth = 0.5) +
+  facet_wrap(~groom_strategy, ncol = 1, scales = "free") +
+  #scale_color_manual(values = strategy_colors) +
+  labs(
+    title    = "Flea population dynamics by grooming strategy",
+    x = "Day", y = "Ectoparasite population size", color = "Grooming Strategy"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "none",
+        strip.text = element_text(face = "bold", size = 12))
+# check all good 
+sim_pop_ex_plot 
+# Save plot 
+png(filename="figures/FigureX_pop_gs_i05_t4.png", width = 16, height =8, unit = 'in', res = 300)
+sim_pop_ex_plot
+dev.off()
+
+```
+
+```{r calculate host population traits}
+# calculate the autocorrelation and the needed space between pops 
+# find_acf_gap <- function(x, cutoff = 0.1, lag.max = 200) {
+#  a <- acf(x, plot = FALSE, lag.max = lag.max, na.action = na.pass)
+#  lags <- a$lag[-1]
+#  acfs <- a$acf[-1]
+  
+#  idx <- which(abs(acfs) < cutoff)[1]
+  
+#  if (is.na(idx)) return(NA)
+#  lags[idx]
+# }
+
+# find_acf_gap(eod_burdens_list[[1]]$population)
+
+# Calculate simulation values 
+# create a list of time points to get the values 
+sample_days <- seq(949, 3449, by = 25) # last 75% of 10 years, every 25 days apart 
+
+# update eod function for full simulation: 
+end_of_day_flea_pop_3650 <- function(sim){
+  
+  init_row <- data.frame(  # pre load initial conditions simulations 
+    event = 0,
+    time = 0,
+    population = 1,
+    event_type = "initial",
+    sim_id = sim$sim_id[1],
+    param_id = sim$param_id[1]
+  )
+
+  sim %>% # Apply operations to the dataset
+    bind_rows(init_row, .) %>%
+    mutate(time_unit = floor(time)) %>% # Convert time to integer units
+    group_by(time_unit) %>%
+    slice_tail(n = 1) %>% # Get the last observation per unit
+    ungroup() %>%
+    select(time_unit, population) %>% # Keep relevant columns
+    
+    # create full sequence
+    tidyr::complete(time_unit = 1:3650) %>%
+    
+    # carry previous value forward
+    tidyr::fill(population, .direction = "down") %>% 
+    dplyr::filter(time_unit >= 1, time_unit <= 3650) %>% # get rid of the initial seeding
+    pull(population) # only get a vector of the population sizes 
+}
+
+
+## function to sample across the simulation
+sample_snapshots_one_pop <- function(simulation_list, sample_days, i) {
+  
+    pop_eod_burdens <- end_of_day_flea_pop_3650(simulation_list[[i]])
+    
+    pop_eod_burden_list <-  list( # save list of the eod values for each sim 
+       sim_id = i,
+       eod_burdens = pop_eod_burdens)
+    
+    pop_eod_burdens_df <- data.frame(time_unit = c(1:3650), eod_burden = pop_eod_burdens)
+    
+    pop_eod_burden_last75 <- subset_simulation(pop_eod_burdens_df,
+                                               range_percent = c(26, 100))
+    pop_sampled_burden <- pop_eod_burden_last75[pop_eod_burden_last75$time_unit %in% sample_days, ]
+    pop_sampled_burden
+}
+
+# load sim_pop if needed 
+# simulation_pop <- load("data/simulation_pop.Rdata")
+# create a list of the sampled day values per pop sim 
+pop_sampled_burden_list <- lapply(
+  seq_along(simulation_pop),
+  function(i) sample_snapshots_one_pop(simulation_pop, sample_days, i)
+)
+
+# Now summarize for these 100 samples 
+summarize_pop_simulations <- function(simulation_list) {
+  
+  result <- lapply(seq_along(simulation_list), function(i) {
+    
+    # save output as a dataframe 
+    
+    pop_sim_df <- simulation_list[[i]]
+    
+    pop_metric_prev <- sum(pop_sim_df$eod_burden > 0)
+    pop_metric_abun <- sum(pop_sim_df$eod_burden) / 100
+    pop_metric_inte <- pop_metric_abun / pop_metric_prev
+      
+    mu <- mean(pop_sim_df$eod_burden)
+    v <- var(pop_sim_df$eod_burden)
+    k <- mu^2 / (v - mu)
+      
+    pop_metric_crowd <- mu + mu / k
+    pop_metric_patch <- 1 + 1 / k
+    
+    data.frame(
+      list_id = i,
+      param_id = i,
+      pop_metric_prev = pop_metric_prev,
+      pop_metric_abun = pop_metric_abun,
+      pop_metric_inte = pop_metric_inte,
+      mu = mu,
+      v = v,
+      pop_metric_k = k,
+      pop_metric_crowd = pop_metric_crowd,
+      pop_metric_patch = pop_metric_patch
+    )
+  }) 
+  
+  do.call(rbind, result)
+}
+
+# run for each simulation 
+system.time({
+  pop_stat_df <- summarize_pop_simulations(pop_sampled_burden_list) # each simulation
+}) 
+
+```
+
+```{r plot population measures across resource scenarios }
+# merge in parameters 
+pop_stat_per_param <- left_join(pop_stat_df, param_grid, by ="param_id")
+
+# save the pop eod spaced burdens
+saveRDS(pop_stat_per_param, "data/sim_pop_metrics.Rdata")
+
+# If I need to load the saved pop_stat_per_param 
+# pop_stat_per_param <- readRDS("data/sim_pop_metrics.Rdata")
+
+# correct abundance to mean abundance 
+pop_stat_per_param$pop_metric_abun <- pop_stat_per_param$pop_metric_abun / 100
+
+# lets look at no grooming for now: 
+## filter to the no grooming
+pop_stat_per_param_ng <- pop_stat_per_param %>% 
+  dplyr::filter(groom_strategy=="none")
+## plot heatmap of prevalence
+prev_it_ng_plot <- ggplot(pop_stat_per_param_ng, 
+       aes(x = theta, y = iota, fill = pop_metric_prev)) +
+  geom_tile() +
+  scale_y_continuous(breaks = seq(0, 0.5, by = 0.1)) +
+  scale_fill_gradientn(colours = c("grey80", viridis::viridis(255, direction = -1)),
+                       values = scales::rescale(c(1, 101)),
+                       name = "population prevalence", 
+                       breaks = c(0,25,50,75,100),
+                       labels = c("1","25","50","75","100")) +
+  labs(x = "theta",
+       y = "iota",
+       fill = "prevalence") +
+  theme_minimal()
+prev_it_ng_plot # check all good
+
+png(filename="figures/FigureX_ti_ng_prev.png", width = 16, height =8, unit = 'in', res = 300)
+prev_it_ng_plot
+dev.off()
+
+# now for a mid grooming scenarios (50) plot, faceted by different strategies 
+pop_stat_per_param_g50 <- pop_stat_per_param %>% 
+  dplyr::filter(scenario==50)
+## define levels of groom_stragety 
+pop_stat_per_param_g50$groom_strategy <- factor(pop_stat_per_param_g50$groom_strategy, 
+                                                 levels = c("none", "programmed", "stimulus",
+                                                            "costly"))
+               
+## plot heatmap of prevalence
+ti_midg_plot <- ggplot(pop_stat_per_param_g50, 
+       aes(x = theta, y = iota, fill = pop_metric_prev)) +
+  geom_tile() +
+  facet_wrap(~groom_strategy, ncol = 1) +
+  scale_y_continuous(breaks = seq(0, 0.5, by = 0.1)) +
+  scale_fill_gradientn(colours = c("grey80", viridis::viridis(255, direction = -1)),
+                       values = scales::rescale(c(1, 101)),
+                       name = "prevalence", 
+                       breaks = c(0,25,500,75,100),
+                       labels = c("0","25","50","75","100")) +
+  labs(x = "theta",
+       y = "iota",
+       fill = "prevalence") +
+  theme_minimal()
+
+ti_midg_plot # check all good 
+
+png(filename="figures/FigureX_ti_midg_prev.png", width = 16, height =8, unit = 'in', res = 300)
+ti_midg_plot
+dev.off()
+
+# plot individual infestation traits by resource 
+## convert into long data 
+pop_stat_per_param_long <- pop_stat_per_param %>%
+  pivot_longer(cols = starts_with("pop_metric_"), 
+                names_to = "metric",
+                values_to = "value") 
+
+# confirm groom strategy factors 
+pop_stat_per_param_long$groom_strategy <- factor(pop_stat_per_param_long$groom_strategy,
+                                                  levels = c("none", 
+                                                             "programmed", 
+                                                             "stimulus",
+                                                             "costly"))
+
+# plot individual metrics for only resource-induced changes to grooming, and no immigration 
+
+pop_met_rg_ni_plot <- ggplot(pop_stat_per_param_long[pop_stat_per_param_long$iota == 0, ], 
+       aes(x = scenario, y = value, 
+           group = interaction(groom_strategy, theta), 
+           color = groom_strategy, alpha = theta)) +
+  geom_line(size = 2) +
+  scale_alpha(range = c(0.4, 1)) +
+  facet_wrap(groom_strategy~metric, ncol = 4, nrow=6, scales = "free_y") +
+  labs(x = "resource availability",
+       y = "value") +
+  theme_minimal()
+pop_met_rg_ni_plot# check all good 
+
+png(filename="figures/FigureX_rg_ni_prev.png", width = 16, height =8, unit = 'in', res = 300)
+pop_met_rg_ni_plot 
+dev.off()
+
+# plot individual metrics for only resource-induced changes to grooming, and baseline immigration (0.2)
+
+pop_met_rg_bi_plot <- ggplot(pop_stat_per_param_long[pop_stat_per_param_long$iota == 0.2, ], 
+       aes(x = scenario, y = value, 
+           group = interaction(groom_strategy, theta), 
+           color = groom_strategy, alpha = theta)) +
+  geom_line(size = 2) +
+  scale_alpha(range = c(0.4, 1)) +
+  facet_wrap(metric ~groom_strategy, ncol = 4, nrow=6, scales = "free_y") +
+  labs(x = "resource availability",
+       y = "value") +
+  theme_minimal()
+
+pop_met_rg_bi_plot # check all good
+
+# # plot individual metrics for only resource-induced changes to grooming, and baseline immigration (0.2) and mid theta (2) 
+
+pop_met_rg_bimt_plot <- ggplot(pop_stat_per_param_long[pop_stat_per_param_long$iota == 0.2 &
+                                                       pop_stat_per_param_long$theta == 5, ], 
+       aes(x = scenario, y = value, 
+           color = groom_strategy)) +
+  geom_point(size = 2) +
+  facet_wrap(metric~groom_strategy, ncol = 4, nrow=6, scales = "free_y") +
+  labs(x = "resource availability",
+       y = "value") +
+  theme_minimal()
+
+pop_met_rg_bimt_plot # check all good 
+
+# save plot 
+png(filename="figures/FigureX_rg_bimt_pop_metrics.png", width = 16, height =8, unit = 'in', res = 300)
+pop_met_rg_bimt_plot 
+dev.off()
+
+
+## Plot separate panels for individual metrics for only resource-induced changes to grooming and no immigration
+prev_plot_ni <- ggplot(pop_stat_per_param_long[pop_stat_per_param_long$iota == 0 & 
+                                               pop_stat_per_param_long$metric == "pop_metric_prev",], 
+                      aes(x = scenario, y = value, 
+                          group = interaction(groom_strategy, theta),  
+                          color = groom_strategy)) +
+  geom_line(size = 2) +
+  scale_alpha(range = c(0.4,1)) +
+  facet_wrap(~groom_strategy, ncol = 1) +
+  labs(x = "resource availability",
+       y = "prevalence") +
+  theme_minimal()  +
+  theme(strip.text.x = element_blank())
+prev_plot_ni
+
+# remove legend for multi-panel plot: 
+prev_plot_ni_nl <- prev_plot_ni +
+  theme(legend.position = "none",
+        axis.title.x = element_blank()) # use joint label instead
+
+## average eod burden 
+abund_plot_ni <- ggplot(pop_stat_per_param_long[pop_stat_per_param_long$iota == 0 &
+                                                  pop_stat_per_param_long$metric ==
+                                                  "pop_metric_avg_abund",], 
+                      aes(x = scenario, y = value, 
+                          group = interaction(groom_strategy, theta), 
+                          color = groom_strategy, alpha = theta)) +
+  geom_line(size = 2) +
+  facet_wrap(~groom_strategy, ncol = 1) +
+  labs(x = "resource availability",
+       y = "abundance") +
+  theme_minimal()  +
+  theme(strip.text.x = element_blank())
+abund_plot_ni
+
+# remove legend for multi-panel plot: 
+abund_plot_ni_nl <- abund_plot_ni +
+  theme(legend.position = "none", 
+        axis.title.x = element_blank()) # use joint label instead
+
+## Intensity  
+intense_plot_ni <- ggplot(pop_stat_per_param_long[pop_stat_per_param_long$iota == 0 & 
+                                                    pop_stat_per_param_long$metric == 
+                                                            "pop_metric_inte",], 
+                      aes(x = scenario, y = value, group = interaction(groom_strategy, theta),
+                          color = groom_strategy, alpha = theta)) +
+  geom_line(size = 2) +
+  scale_alpha(range = c(0.4,1)) +
+  facet_wrap(~groom_strategy, ncol = 1) +
+  labs(x = "resource availability",
+       y = "total groomed population") +
+  theme_minimal()  +
+  theme(strip.text.x = element_blank())
+intense_plot_ni
+
+# remove legend for multi-panel plot: 
+intense_plot_ni_nl <- intense_plot_ni +
+  theme(axis.title.x = element_blank(), # use joint label instead 
+        legend.position = "none")
+  
+## k aggregation
+k_plot_ni <- ggplot(pop_stat_per_param_long[pop_stat_per_param_long$iota == 0 &
+                                            pop_stat_per_param_long$metric == "pop_metric_k",], 
+                      aes(x = scenario, y = value, 
+                          group = interaction(groom_strategy, theta), 
+                          color = groom_strategy, alpha = theta)) +
+  geom_line(size = 2) +
+  scale_alpha(range = c(0.4, 1)) +
+  facet_wrap(~groom_strategy, ncol = 1) +
+  labs(x = "resource availability",
+       y = "aggegation (k)") +
+  theme_minimal()  +
+  theme(strip.text.x = element_blank(), 
+        axis.title.x = element_blank()) # use joint label instead
+k_plot_ni # check all good 
+
+# Multipanel plot for no immigration 
+png(filename="figures/FigureX6_pop_metrics_ni.png", width = 16, height =8, unit = 'in', res = 300)
+grid.arrange(prev_ni_nl, abund_plot_ni_nl , intense_plot_ni_nl, k_plot_ni, 
+             nrow = 1,
+             bottom = "resource availability")
+dev.off()
+
+# Now Resources jointly impacts immigration and grooming  
+## use resource pairs for just grooming 
+  
+  
+pop_stat_per_param_long_ri_link <- pop_stat_per_param_long %>%
+  inner_join(resource_pairs, by = c("scenario", "iota"))
+
+# confirm grooming strategy levels
+pop_stat_per_param_long_ri_link$groom_strategy <- factor(pop_stat_per_param_long_ri_link$groom_strategy,
+                                                          levels = c("none", 
+                                                                     "programmed", 
+                                                                     "stimulus", 
+                                                                     "costly")) 
+# prepare individual metric plots 
+
+# PLOT OF RESOURCE on individual metrics with immigration-grooming paired and Theta = 5
+## total population 
+prev_plot <- ggplot(pop_stat_per_param_long_ri_link[pop_stat_per_param_long_ri_link$theta==7 &
+                                        pop_stat_per_param_long_ri_link$metric == "pop_metric_prev",], 
+                      aes(x = scenario, y = value, group = groom_strategy, color = groom_strategy)) +
+  geom_line(size = 2) +
+  facet_wrap(~groom_strategy, ncol = 4) +
+  labs(x = "resource availability",
+       y = "prevalence") +
+  theme_minimal()  +
+  theme(strip.text.x = element_blank())
+prev_plot
+
+# remove legend for multi-panel plot: 
+prev_plot_nl <- prev_plot +
+  theme(legend.position = "none",
+        axis.title.x = element_blank()) # use joint label instead
+
+## average eod burden 
+abund_plot <- ggplot(pop_stat_per_param_long_ri_link[pop_stat_per_param_long_ri_link$theta==7 &
+                                                    pop_stat_per_param_long_ri_link$metric == 
+                                                            "pop_metric_abun",], 
+                      aes(x = scenario, y = value, group = groom_strategy, color = groom_strategy)) +
+  geom_line(size = 2) +
+  facet_wrap(~groom_strategy, ncol = 4) +
+  labs(x = "resource availability",
+       y = "mean abundance") +
+  theme_minimal()  +
+  theme(strip.text.x = element_blank())
+abund_plot
+
+# remove legend for multi-panel plot: 
+abund_plot_nl <- abund_plot +
+  theme(legend.position = "none", 
+        axis.title.x = element_blank()) # use joint label instead
+
+## INTENSITY  
+intense_plot <- ggplot(pop_stat_per_param_long_ri_link[pop_stat_per_param_long_ri_link$theta==7 &
+                                                       pop_stat_per_param_long_ri_link$metric == 
+                                                            "pop_metric_inte",], 
+                      aes(x = scenario, y = value, group = groom_strategy, color = groom_strategy)) +
+  geom_line(size = 2) +
+  facet_wrap(~groom_strategy, ncol = 4) +
+  labs(x = "resource availability",
+       y = "mean intensity") +
+  theme_minimal()  +
+  theme(strip.text.x = element_blank())
+intense_plot
+
+# remove legend for multi-panel plot: 
+intense_plot_nl <- intense_plot +
+  theme(axis.title.x = element_blank(), # use joint label instead 
+        legend.position = "none")
+  
+## Aggregation k 
+k_plot <- ggplot(pop_stat_per_param_long_ri_link[pop_stat_per_param_long_ri_link$theta==7 &
+                                                 pop_stat_per_param_long_ri_link$metric == 
+                                                            "pop_metric_k",], 
+                      aes(x = scenario, y = round(value/780*100,2), 
+                          group = groom_strategy, color = groom_strategy)) +
+  geom_line(size = 2) +
+  
+  facet_wrap(~groom_strategy, ncol = 4) +
+  geom_line(y= 1, color = "black") +
+  geom_line(y= 0, color = "grey") +
+  geom_line(y= 20, color = "grey") +
+  scale_y_continuous(limits = c(0,20)) +
+  labs(x = "resource availability",
+       y = "aggregation (k)") +
+  theme_minimal()  +
+  theme(strip.text.x = element_blank(), 
+        axis.title.x = element_blank()) # use joint label instead
+k_plot # check all good 
+
+# Multipanel plot for one theta value (5)
+png(filename="figures/FigureX_pop_metrics_rgi_t7.png", width = 16, height =8, unit = 'in', res = 300)
+grid.arrange(prev_plot_nl, abund_plot_nl , intense_plot_nl, k_plot, nrow = 4,
+             bottom = "resource availability")
+dev.off()
+
+# PLOT OF RESOURCE on individual metrics with immigration-grooming paired with variable Theta
+## total population for all thetas
+prev_plot_at <- ggplot(pop_stat_per_param_long_ri_link[pop_stat_per_param_long_ri_link$metric == 
+                                                            "pop_metric_prev",], 
+                      aes(x = scenario, y = value, group = interaction(groom_strategy, theta), 
+                          color = groom_strategy, alpha = theta)) +
+  geom_line(size = 2) +
+  scale_alpha(range = c(0.4, 1)) +
+  facet_wrap(~groom_strategy, ncol = 4) +
+  labs(x = "resource availability",
+       y = "prevalence") +
+  theme_minimal()  +
+  theme(strip.text.x = element_blank())
+prev_plot_at 
+
+# remove legend for multi-panel plot: 
+prev_plot_at_nl <- prev_plot_at +
+  theme(legend.position = "none",
+        axis.title.y = element_text(face = "bold", size =20),
+        axis.text.x = element_text(size=14),
+        axis.text.y= element_text(size=14),
+        axis.title.x = element_blank()) # use joint label instead
+
+## average eod burden for all thetas
+abund_plot_at <- ggplot(pop_stat_per_param_long_ri_link[pop_stat_per_param_long_ri_link$metric == 
+                                                            "pop_metric_abun",], 
+                      aes(x = scenario, y = value, group = interaction(groom_strategy, theta), 
+                          color = groom_strategy, alpha = theta)) +
+  geom_line(size = 2) +
+  scale_alpha(range = c(0.4, 1)) +
+  facet_wrap(~groom_strategy, ncol = 4) +
+  labs(x = "resource availability",
+       y = "mean abundance") +
+  theme_minimal()  +
+  theme(strip.text.x = element_blank())
+abund_plot_at
+
+# remove legend for multi-panel plot: 
+abund_plot_at_nl <- abund_plot_at +
+  theme(legend.position = "none", 
+        axis.title.y = element_text(face = "bold", size =20),
+        axis.text.x = element_text(size=14),
+        axis.text.y= element_text(size=14),
+        axis.title.x = element_blank()) # use joint label instead
+
+## Intensity  
+intense_plot_at <- ggplot(pop_stat_per_param_long_ri_link[pop_stat_per_param_long_ri_link$metric == 
+                                                            "pop_metric_inte",], 
+                      aes(x = scenario, y = value, group = interaction(groom_strategy,theta),
+                          color = groom_strategy, alpha = theta)) +
+  geom_line(size = 2) +
+  scale_alpha(range = c(0.4, 1)) +
+  facet_wrap(~groom_strategy, ncol = 4) +
+  labs(x = "resource availability",
+       y = "mean intensity") +
+  theme_minimal()  +
+  theme(strip.text.x = element_blank())
+intense_plot_at
+
+# remove legend for multi-panel plot: 
+intense_plot_at_nl <- intense_plot_at +
+  theme(axis.title.x = element_blank(), # use joint label instead 
+        legend.position = "none",
+        axis.title.y = element_text(face = "bold", size =20),
+        axis.text.x = element_text(size=14),
+        axis.text.y= element_text(size=14))
+  
+## k aggregation 
+k_plot_at <- ggplot(pop_stat_per_param_long_ri_link[pop_stat_per_param_long_ri_link$metric == 
+                                                            "pop_metric_k",], 
+                      aes(x = scenario, y = value, 
+                          group = interaction(groom_strategy,theta),  
+                          color = groom_strategy, alpha = theta)) +
+  geom_line(size = 2) +
+  scale_alpha(range = c(0.4, 1)) +
+  scale_y_continuous(limits = c(0,5)) +
+  facet_wrap(~groom_strategy, ncol = 4) +
+  labs(x = "resource availability",
+       y = "aggregation (k)") +
+  geom_line(y= 1, color = "black") +
+  geom_line(y= 0, color = "grey") +
+  geom_line(y= 20, color = "grey") +
+  theme_minimal()  +
+  theme(strip.text.x = element_blank(), 
+        axis.title.x = element_blank(),# use joint label instead
+        axis.title.y = element_text(face = "bold", size =20),
+        axis.text.x = element_text(size=14),
+        axis.text.y= element_text(size=14))
+k_plot_at  # check all good 
+
+# Save Plot 
+png(filename="figures/FigureX7_pop_metrics_ri-link.png", width = 16, height =8, unit = 'in', res = 300)
+grid.arrange(prev_plot_at_nl, abund_plot_at_nl, intense_plot_at_nl, k_plot_at, nrow = 4,
+             bottom = grid::textGrob("resource availability",
+                               gp = grid::gpar(fontsize = 20, fontface = "bold")))
+dev.off()
+
+# Lets focus on just costly and stimulus, as they appear to only have suitable k variation, limit theta 
+k_plot_at_sc_3t <- ggplot(pop_stat_per_param_long_ri_link[
+  pop_stat_per_param_long_ri_link$metric == "pop_metric_k" &
+  pop_stat_per_param_long_ri_link$groom_strategy %in% c("stimulus", "programmed") &
+  pop_stat_per_param_long_ri_link$theta == 7,], 
+                      aes(x = scenario, y = value, 
+                          group = interaction(groom_strategy,theta),  
+                          color = groom_strategy, alpha = theta)) +
+  geom_point(size = 2) +
+  scale_alpha(range = c(0.4, 1)) +
+  scale_y_continuous(limits = c(0,5)) +
+  facet_wrap(~groom_strategy, ncol = 2) +
+  labs(x = "resource availability",
+       y = "aggregation (k)") +
+  geom_line(y= 1, color = "black") +
+  geom_line(y= 0, color = "grey") +
+  geom_line(y= 20, color = "grey") +
+  theme_minimal()  +
+  theme(strip.text.x = element_blank(), 
+        axis.title.x = element_blank(),# use joint label instead
+        axis.title.y = element_text(face = "bold", size =20),
+        axis.text.x = element_text(size=14),
+        axis.text.y= element_text(size=14))
+k_plot_at_sc_3t 
+```
+
+```{r k heatmap}
+library(scales)
+
+k_hm_plot_df <- pop_stat_per_param_long %>%
+  filter(
+    scenario == 50,
+    metric == "pop_metric_k"
+  ) %>%
+  mutate(
+    fill_value = case_when(
+      is.na(value) ~ -2,   # extinction
+      value < 0    ~ -1,   # underdispersed
+      value > 10   ~ 11,   # random
+      TRUE         ~ value # 0–10 linear
+    ),
+    class = case_when(
+      is.na(value) ~ "Extinct",
+      value < 0    ~ "Underdispersed",
+      value > 10   ~ "Random",
+      TRUE         ~ "Aggregated"
+    )
+  )
+
+k_gs_pct <- k_hm_plot_df %>%
+  filter(class %in% c("Extinct", "Underdispersed", "Aggregated", "Random")) %>%
+  count(groom_strategy, class) %>%
+  group_by(groom_strategy) %>%
+  mutate(prop = n / sum(n),
+         class = factor(
+      class,
+      levels = c("Extinct", "Underdispersed", "Aggregated", "Random")
+    )
+  )
+
+k_gs_pct_plot <- ggplot(k_gs_pct, aes(x = 1, y = prop, fill = class)) +
+  geom_col(width = 0.8) +
+  coord_flip() +
+  facet_grid(~ groom_strategy) +
+  scale_y_continuous(
+    limits = c(0, 1),
+    breaks = c(0, 0.5, 1),
+    labels = c("0", "0.5", "1")
+  ) +
+  scale_fill_manual(
+    values = c(
+      "Extinct" = "yellow",
+      "Underdispersed" = "blue",
+      "Aggregated" = "gray50",
+      "Random" = "red"
+    ),
+    drop = FALSE,
+    name = "Dispersion"
+  ) +
+  labs(x = NULL, y = "Proportion") +
+  theme_minimal() +
+  theme(
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.text = element_blank(),
+    legend.position = "none"
+  )
+k_gs_pct_plot # check all good
+
+# Save proportion of k categories
+png(filename="figures/FigureX_kpop_cats.png", width = 8, height =8, unit = 'in', res = 300)
+k_gs_pct_plot
+dev.off()
+
+k_legend_df <- data.frame(
+  class = c("Extinct", "Underdispersed", "Aggregated", "Random"),
+  x = NA_real_,
+  y = NA_real_
+)
+
+k_it <- ggplot(k_hm_plot_df, aes(x = theta, y = iota)) +
+  geom_tile(aes(fill = fill_value)) +
+
+  scale_fill_gradientn(
+    colours = c(
+      "yellow",  # extinction
+      "blue",    # <0
+      "black",   # 0
+      "gray85",   # 10
+      "red"      # >10
+    ),
+    values = rescale(c(
+      -2,   # extinct
+      -1,   # underdispersed
+      0,    # start of gradient
+      10,   # end of gradient
+      11    # random
+    )),
+    limits = c(-2, 11),
+    breaks = c(0, 2, 5, 10),
+    labels = c("0", "2", "5", "10"),
+    name = "k (0–10)"
+  ) +
+
+  # dummy legend for class
+  geom_point(
+    data = k_legend_df,
+    aes(x = x, y = y, color = class),
+    inherit.aes = FALSE,
+    alpha = 0
+  ) +
+
+  scale_color_manual(
+    values = c(
+      "Extinct" = "yellow",
+      "Underdispersed" = "blue",
+      "Aggregated" = "gray50",
+      "Random" = "red"
+    ),
+    name = "Class"
+  ) +
+
+  facet_grid(~ groom_strategy) +
+  labs(x = "theta", y = "iota") +
+  theme_minimal() +
+  guides(
+    color = guide_legend(order = 1, override.aes = list(alpha = 1, size = 5)),
+    fill  = guide_colorbar(order = 2)
+  )
+k_it # confirm all good
+
+
+# Save Heatmap
+png(filename="figures/FigureX_kpop_sensitivity.png", width = 8, height =8, unit = 'in', res = 300)
+k_it
+dev.off()
+
+# Filter to Aggregated scenarios 
+agg_pop_stat_per_param <- pop_stat_per_param[pop_stat_per_param$scenario == 50 &
+                               pop_stat_per_param$pop_metric_k < 1 & 
+                               pop_stat_per_param$pop_metric_k > 0, ]
+
+
+# Based on this, we will explore theta = 6 and iota = 0.05 as aggregated 
+prev_plot_agg <- ggplot(pop_stat_per_param_long_ri_link[
+  pop_stat_per_param_long_ri_link$metric == "pop_metric_prev" & 
+  pop_stat_per_param_long_ri_link$theta == 6,], 
+                      aes(x = scenario, y = value, group = groom_strategy, 
+                          color = groom_strategy)) +
+  geom_line(size = 2) +
+  facet_wrap(~groom_strategy, ncol = 4) +
+  labs(x = "resource availability",
+       y = "prevalence") +
+  theme_minimal()  +
+  theme(strip.text.x = element_blank())
+prev_plot_agg 
+
+# remove legend for multi-panel plot: 
+prev_plot_agg_nl <- prev_plot_agg +
+  theme(legend.position = "none",
+        axis.title.y = element_text(face = "bold", size =14),
+        axis.text.x = element_text(size=14),
+        axis.text.y= element_text(size=14),
+        axis.title.x = element_blank()) # use joint label instead
+
+## average eod burden for all thetas
+abund_plot_agg <- ggplot(pop_stat_per_param_long_ri_link[
+  pop_stat_per_param_long_ri_link$metric == "pop_metric_abun" &
+  pop_stat_per_param_long_ri_link$theta == 6,], 
+                      aes(x = scenario, y = value, group = groom_strategy, 
+                          color = groom_strategy)) +
+  geom_line(size = 2) +
+  facet_wrap(~groom_strategy, ncol = 4) +
+  labs(x = "resource availability",
+       y = "mean abundance") +
+  theme_minimal()  +
+  theme(strip.text.x = element_blank())
+abund_plot_agg
+
+# remove legend for multi-panel plot: 
+abund_plot_agg_nl <- abund_plot_agg +
+  theme(legend.position = "none", 
+        axis.title.y = element_text(face = "bold", size =14),
+        axis.text.x = element_text(size=14),
+        axis.text.y= element_text(size=14),
+        axis.title.x = element_blank()) # use joint label instead
+
+## Intensity  
+intense_plot_agg <- ggplot(pop_stat_per_param_long_ri_link[
+  pop_stat_per_param_long_ri_link$metric == "pop_metric_inte" &
+  pop_stat_per_param_long_ri_link$theta == 6,], 
+                      aes(x = scenario, y = value, group = groom_strategy,
+                          color = groom_strategy)) +
+  geom_line(size = 2) +
+  facet_wrap(~groom_strategy, ncol = 4) +
+  labs(x = "resource availability",
+       y = "mean intensity") +
+  theme_minimal()  +
+  theme(strip.text.x = element_blank())
+intense_plot_agg
+
+# remove legend for multi-panel plot: 
+intense_plot_agg_nl <- intense_plot_agg +
+  theme(axis.title.x = element_blank(), # use joint label instead 
+        legend.position = "none",
+        axis.title.y = element_text(face = "bold", size =14),
+        axis.text.x = element_text(size=14),
+        axis.text.y= element_text(size=14))
+  
+## k aggregation 
+k_plot_agg <- ggplot(pop_stat_per_param_long_ri_link[
+  pop_stat_per_param_long_ri_link$metric == "pop_metric_k" & 
+  pop_stat_per_param_long_ri_link$theta == 6,], 
+                      aes(x = scenario, y = value, 
+                          group = groom_strategy,  
+                          color = groom_strategy)) +
+  geom_line(size = 2) +
+  facet_wrap(~groom_strategy, ncol = 4) +
+  labs(x = "resource availability",
+       y = "aggregation (k)") +
+  geom_line(y= 10, color = "grey") +
+  geom_line(y= 1, color = "black") +
+  geom_line(y= 0, color = "grey") +
+  theme_minimal()  +
+  theme(strip.text.x = element_blank(), 
+        axis.title.x = element_blank(),# use joint label instead
+        axis.title.y = element_text(face = "bold", size =14),
+        axis.text.x = element_text(size=14),
+        axis.text.y= element_text(size=14))
+k_plot_agg  # check all good 
+
+# Save Plot 
+png(filename="figures/FigureX_agg_metrics_ri-link.png", width = 16, height =8, unit = 'in', res = 300)
+grid.arrange(prev_plot_agg_nl, abund_plot_agg_nl, intense_plot_agg_nl, k_plot_agg, nrow = 4,
+             bottom = grid::textGrob("resource availability",
+                               gp = grid::gpar(fontsize = 20, fontface = "bold")))
+dev.off()
+
+```
+```{r}
+# -- Plot 2: Strategy means + IQR ribbons --
+summary_df <- results |>
+  group_by(strategy, day) |>
+  summarise(mean_N = mean(N),
+            lo     = quantile(N, 0.25),
+            hi     = quantile(N, 0.75),
+            .groups = "drop")
+```
+
