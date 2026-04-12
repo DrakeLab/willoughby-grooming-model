@@ -1,0 +1,532 @@
+---
+title: "Grooming Scenarios"
+author: "Anna Willoughby"
+date: "2025-05-22"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyr) 
+library(ggplot2) # plots
+library(dplyr)
+library(gridExtra) # plotting multipanels 
+```
+
+```{r}
+# plot different grooming scenarios 
+
+# function for programmed grooming 
+# mid-grooming at a baseline level when resources are at 50 
+groomrate_prg <- function(pop.size, groom_prg_bl, 
+                          r, groom_resource_link){
+  death_rate <- ifelse(groom_resource_link == 0, pmin(pop.size, groom_prg_bl),
+                       pmin(pop.size, groom_prg_bl * r * groom_resource_link))
+  death_rate
+}
+
+# function for stimulus grooming deathrate based on pop size 
+# mid-grooming at a baseline level when resources are at 50 
+groomrate_stm <- function(pop.size, groom_stim_bl, r, groom_resource_link){
+  death_rate <- ifelse(groom_resource_link ==0, pmin(pop.size, groom_stim_bl),
+                       pop.size*( (groom_stim_bl * r * groom_resource_link) /100))
+  death_rate
+}
+
+# Function to get cumulative groom rate from programmed and stimulus grooming 
+get_groom_rate <- function(pop.size, groom_prg_bl, groom_stim_bl, 
+                           r, groom_resource_link) {
+  prg_rate = groomrate_prg(pop.size, groom_prg_bl, r, groom_resource_link)
+  stm_rate = groomrate_stm(pop.size, groom_stim_bl, r, groom_resource_link) 
+  groom_rate =  pmin(pop.size, prg_rate + stm_rate)
+  groom_rate
+}
+
+# 1. Define parameter ranges
+x_vals <- seq(1, 100, length.out = 100)  # parasite population size 
+resource_vals <- seq(1, 100, length.out = 100)   # resource levels
+
+# 2. Create grid of all combinations
+# 2. Create a grid of all combinations
+grid_all <- expand.grid(
+  pop_size = x_vals,
+  r = resource_vals,
+  g_prg_bl = c(0,20), 
+  g_stm_bl = c(0,20)#,
+  #theta = seq(0,20, by = 1), 
+  #iota_baseline = seq(0,10, by =0.5)
+)
+grid_all$groom_resource_link = 1/50
+
+grid_all$g_rate <- get_groom_rate(grid_all$pop_size, 
+                                  grid_all$g_prg_bl, grid_all$g_stm_bl, 
+                                  grid_all$r,
+                                  grid_all$groom_resource_link)
+
+# filter out the no grooming scenario 
+grid_groom_any <- grid_all[grid_all$g_prg_bl != 0 | grid_all$g_stm_bl != 0, ]
+grid_groom_either <- grid_groom_any[!(grid_groom_any$g_prg_bl == 20 & grid_groom_any$g_stm_bl == 20), ]
+
+# create annotation labels 
+ann_df <- data.frame(
+  g_stm_bl = c(0, 20),
+  g_prg_bl = c(20, 0),
+  label = c("b. Programmed", "c. Stimulus-driven"),
+  x = 25,
+  y = 50
+)
+
+# Plot grooming rates 
+g_by_epop_plot <- ggplot(grid_groom_either, # limit to grooming scenarios
+       aes(x = pop_size, y = g_rate, color = r, 
+           group = interaction(r, g_stm_bl, g_prg_bl))) +
+  geom_line(linewidth = 1.5) +
+  scale_color_viridis_c(option = "inferno", direction = -1,
+                        limits = c(1,100),
+                        breaks = c(1, 25, 50, 75, 100)) +
+  facet_wrap(g_stm_bl~g_prg_bl) + 
+  labs(
+    x = "ectoparasite population size",
+    y = "death rate due to host grooming",
+    color = "Resources"
+  ) +
+  scale_y_continuous(limits = c(0,50)) +
+
+
+  theme_classic() + 
+  theme(
+  strip.text = element_blank(),
+  strip.background = element_blank()) + 
+  geom_text(data = ann_df,
+            aes(x = x, y = y, label = label),
+            inherit.aes = FALSE,
+  size = 4,
+  fontface = "bold"
+)
+  
+g_by_epop_plot # check all good 
+
+# Plot resources by immigration
+
+immigrationrate <- function(x, iota_baseline, iota_r, r){ 
+  iota = iota_baseline + r * iota_r   
+  iota
+}
+
+
+# 2. Create grid of all combinations
+# 2. Create a grid of all combinations
+i_grid <- expand.grid(
+  pop_size = x_vals,
+  r = resource_vals
+)
+
+i_grid$iR <- immigrationrate(i_grid$pop_size, 0.5, 0.1, i_grid$r)
+# Plot grooming rates 
+i_by_epop_plot <- ggplot(i_grid, # limit to grooming scenarios
+       aes(x = pop_size, y = iR, color = r, 
+           group = interaction(r))) +
+  geom_line(linewidth = 1.5) +
+  scale_color_viridis_c(option = "inferno", direction = -1,
+                        limits = c(1,100),
+                        breaks = c(1, 25, 50, 75, 100),
+                        guide = "none") +
+  labs(
+    x = "ectoparasite population size",
+    y = "immigration rate",
+    color = "Resources"
+  ) +
+  scale_y_continuous(limits = c(0,12),
+                     breaks = c(0,4,8,12)) +
+  annotate("text", x = 20, y = 11.8, label = expression(bold("a. Immigration"))) +
+  theme_classic() + 
+  theme(
+  strip.text = element_blank(),
+  strip.background = element_blank()) + 
+  geom_text(data = ann_df,
+            aes(x = x, y = y, label = label),
+            inherit.aes = FALSE,
+  size = 4,
+  fontface = "bold"
+)
+  
+i_by_epop_plot # check all good 
+
+# Save the plot 
+# plot all two scenarios next to eachother 
+png(filename="figures/Fig2_resource_vars.png", width = 11, height =3, unit = 'in', res = 300)
+grid.arrange(i_by_epop_plot, g_by_epop_plot, ncol = 2, widths = c(1,2))
+dev.off()
+```
+
+
+```{r plot full growth formula}
+## DEFINE FUNCTIONS 
+# function for birth rate with Allee effect (theta)
+birthrate <- function(x, b0, theta, K){
+  b <- b0*x*(x/(theta+x)) # baseline births with Allee
+  b_dd <- b*x*(1 - x/ K) # birth decreases at high densities
+  b_wA_dd <- pmax(0, b_dd)
+  b_wA_dd # birth rate with Allee and density dependence
+}
+
+# function for immigration rate (iota)
+# baseline iota, and resource linked increase
+immigrationrate <- function(x, iota_baseline, iota_r, r){ 
+  iota = iota_baseline + r * iota_r   
+  iota
+}
+
+# Function for density dependent deaths 
+deathrate_dd <- function(pop.size, dmax = 1, x_mid = 50, s = 20) {
+     dmax / (1 + exp(-(pop.size - x_mid) / s))
+}
+
+# set initial conditions parameters
+
+## birth rate is standard across all scenarios, right now as 37.5 flea births per year (0. per day)
+## we are going to vary parameters for:  
+theta_vals <- seq(0, 20, by = 2) # 10 different values
+iota_bl_vals <- seq(0, 10, by = 0.05) # 25 different Keep for all the same 
+iota_r_vals <- seq(0, 0.1, by = 0.01) # 10 different values
+scenario_vals <- seq(1,100, by = 1) # 100 different values (no grooming is an explicit scenario) 
+groom_prg_bl_vals <- c(0,20) # grooming baseline 
+groom_stim_bl_vals <- c(0, 20) # grooming baseline   
+groom_resource_link_vals <- c(0, 1/50) # add in no resource-adjusted grooming 
+
+# construct full matrix of theta and iota options 
+tig_axes <- expand.grid(
+  theta = theta_vals, 
+  iota_baseline = iota_bl_vals,
+  iota_r = iota_r_vals, 
+  scenario = scenario_vals, 
+  groom_prg_baseline = groom_prg_bl_vals, 
+  groom_stm_baseline = groom_stim_bl_vals,
+  groom_resource_link = groom_resource_link_vals
+
+)
+
+# Construct parameter set
+param_grid <- tig_axes 
+param_grid$b0 <- log(78.75)/89 # constant [log(female fecundity per lifetime)/generation time]
+param_grid$initial_pop <- 1
+
+# filter tig_axes to parameters of interest 
+## ir = 0.01, ib = 0.02, 
+tig_axes_ss <- tig_axes %>% dplyr::filter(iota_r == 0.1, iota_baseline == 5)
+
+# DEFINE DATA FRAME 
+ecto.pop.rates <- tig_axes_ss
+
+gr1 <- vector("list", nrow(ecto.pop.rates))
+
+# calculate growth rate for each parameter combo for pop sizes 1:100
+system.time({
+for (i in seq_len(nrow(ecto.pop.rates))) {
+  
+  row.params <- as.list(ecto.pop.rates[i, ])
+  
+  x_vals <- 1:100
+  
+  gr1[[i]] <- birthrate(x_vals, log(78.75)/89, row.params$theta, 50) -
+    deathrate_dd(x_vals) -
+    get_groom_rate(x_vals, 
+                   row.params$groom_prg_baseline,
+                   row.params$groom_stm_baseline, 
+                   row.params$scenario,
+                   row.params$groom_resource_link) +
+    immigrationrate(x_vals, 
+                    row.params$iota_baseline, row.params$iota_r, 
+                    row.params$scenario)
+}
+  })
+
+# create a data frame 
+ecto.pop.rates_long <- ecto.pop.rates %>%
+  mutate(gr = gr1) %>%
+  unnest(gr) %>%
+  mutate(pop.size = rep(1:100, times = nrow(ecto.pop.rates)))
+# saveRDS(ecto.pop.rates_long, "growth_rates.Rdata") # save all the growth rates 
+
+# convert ecto pop rates (epr) by pop size 
+ecto.pop.rates_long$groom_prg_baseline <- factor(ecto.pop.rates_long$groom_prg_baseline, 
+                                                 levels = c(0,20))
+ecto.pop.rates_long$groom_stm_baseline <- factor(ecto.pop.rates_long$groom_stm_baseline, 
+                                                 levels = c(0,20))
+
+# plot the mid resource scenario 
+epr_plot_mr <- ggplot(ecto.pop.rates_long[ecto.pop.rates_long$theta == 8 &
+                                       ecto.pop.rates_long$iota_r == 0.1 &
+                                       ecto.pop.rates_long$iota_baseline == 5 &
+                                       ecto.pop.rates_long$scenario == 50 &
+                                       ecto.pop.rates_long$groom_resource_link == 1/50,], 
+                         aes(x = pop.size, y = gr, 
+                             group = scenario, color = scenario)) +
+  geom_line(linewidth = 1) +
+  facet_grid(groom_prg_baseline ~ groom_stm_baseline,
+             labeller = labeller(
+               groom_prg_baseline = function(x) paste("Programmed =", x),
+               groom_stm_baseline = function(x) paste("Stimulus =", x)
+             )) +
+  #scale_y_continuous(limits = c(-2,8)) +
+  geom_hline(yintercept=0, color = "black") +
+   scale_color_gradientn(
+    colours = c("gray70", viridis::viridis(255, option = "inferno", direction = -1)),
+    values  = scales::rescale(c(1, 100)),
+    limits  = c(1, 100),
+    breaks  = c(1, 100),
+    labels = c("Low","High"), 
+    name    = "Resources") +
+  labs(
+    x = "ectoparasite population size",
+    y = "growth rate",
+   # title = expression(bold("a.") ~ " Programmed")
+  ) +
+  theme_classic() +
+  theme(plot.title = element_text(hjust = 0.1, vjust = -10), 
+        #legend.position = c(0.1, 0.4),
+        #legend.justification = c(1, 1), 
+        legend.background = element_rect(fill = NA, color = "black"),
+        legend.box.background = element_rect(fill = NA, color = NA), 
+        legend.text  = element_text(size = 6),
+        legend.title = element_text(size = 7)
+        )
+epr_plot_mr
+
+
+# plot all resources 
+epr_plot <- ggplot(ecto.pop.rates_long[ecto.pop.rates_long$theta == 8 &
+                                       ecto.pop.rates_long$iota_r == 0.1 &
+                                       ecto.pop.rates_long$iota_baseline == 5 &
+                                       ecto.pop.rates_long$groom_resource_link == 0.02,], 
+                         aes(x = pop.size, y = gr, 
+                             group = scenario, color = scenario)) +
+  geom_line(linewidth = 1) +
+  facet_grid(groom_prg_baseline ~ groom_stm_baseline,
+             labeller = labeller(
+               groom_prg_baseline = function(x) paste("Programmed =", x),
+               groom_stm_baseline = function(x) paste("Stimulus =", x)
+             )) +
+  #scale_y_continuous(limits = c(-2,8)) +
+  geom_hline(yintercept=0, color = "black") +
+   scale_color_gradientn(
+    colours = c("gray70", viridis::viridis(255, option = "inferno", direction = -1)),
+    values  = scales::rescale(c(1, 100)),
+    limits  = c(1, 100),
+    breaks  = c(1, 100),
+    labels = c("Low","High"), 
+    name    = "Resources") +
+  labs(
+    x = "ectoparasite population size",
+    y = "growth rate",
+   # title = expression(bold("a.") ~ " Programmed")
+  ) +
+  theme_classic() +
+  theme(plot.title = element_text(hjust = 0.1,vjust = -10), 
+        #legend.position = c(0.1, 0.4),
+        #legend.justification = c(1, 1), 
+        legend.background = element_rect(fill = NA, color = "black"),
+        legend.box.background = element_rect(fill = NA, color = NA), 
+        legend.text  = element_text(size = 6),
+        legend.title = element_text(size = 7)
+        )
+epr_plot 
+
+png(filename="figures/growth_rate_by_t8_bli5_ri2_ps-combo.png", width = 7.5, height =3, unit = 'in', res = 300)
+epr_plot
+dev.off()
+```
+
+```{r immigration and grooming resources }
+# Make the growth function: 
+net_growth <- function(x, row.params) {
+  birthrate(x, log(78.75)/89, row.params$theta, 50) -
+    deathrate_dd(x) -
+    get_groom_rate(x,
+                   row.params$groom_prg_baseline,
+                   row.params$groom_stm_baseline,
+                   row.params$scenario) +
+    immigrationrate(x,
+                    row.params$iota_baseline,
+                    row.params$iota_r,
+                    row.params$scenario)
+}
+
+# Find the zeros 
+find_roots_one <- function(row.params, x_min = 0, x_max = 500, by = 0.1) {
+  
+  x_grid <- seq(x_min, x_max, by = by)
+  y_grid <- sapply(x_grid, net_growth, row.params = row.params)
+  y_grid[!is.finite(y_grid)] <- NA_real_
+  
+  roots <- numeric(0)
+  
+  for (j in seq_len(length(x_grid) - 1)) {
+    y1 <- y_grid[j]
+    y2 <- y_grid[j + 1]
+    x1 <- x_grid[j]
+    x2 <- x_grid[j + 1]
+    
+    # skip intervals with missing values
+    if (is.na(y1) || is.na(y2)) next
+    
+    # exact or near-exact zero at a grid point
+    if (abs(y1) < 1e-8) {
+      roots <- c(roots, x1)
+    }
+    
+    # sign change across interval
+    if (y1 * y2 < 0) {
+      root <- tryCatch(
+        uniroot(
+          function(x) net_growth(x, row.params),
+          interval = c(x1, x2)
+        )$root,
+        error = function(e) NA_real_
+      )
+      
+      if (is.finite(root)) {
+        roots <- c(roots, root)
+      }
+    }
+  }
+  
+  if (length(roots) == 0) return(numeric(0))
+  
+  roots <- roots[is.finite(roots)]
+  roots <- unique(round(as.numeric(roots), 6))
+  sort(roots)
+}
+
+# Just loock at parameters of interest
+subset_params <- ecto.pop.rates[
+  ecto.pop.rates$theta == 8 &
+  ecto.pop.rates$iota_r == 0.2 &
+  ecto.pop.rates$iota_baseline == 0.5,
+]
+
+root_list <- vector("list", nrow(subset_params))
+
+for (i in seq_len(nrow(subset_params))) {
+  row.params <- as.list(subset_params[i, ])
+  root_list[[i]] <- find_roots_one(row.params)
+}
+
+# add the roots back to the parameters 
+subset_params$roots <- root_list 
+
+# make mulit rooms 
+roots_long <- subset_params %>%
+  mutate(param_id = row_number()) %>%
+  unnest_longer(roots, values_to = "root")
+
+eq_plot_subset <- ggplot(roots_long, 
+                         aes(y = root, x = scenario)) +
+  geom_point(size = 1) +
+  facet_grid(groom_prg_baseline ~ groom_stm_baseline,
+             scales = "free_y", 
+             labeller = labeller(
+               groom_prg_baseline = function(x) paste("Programmed =", x),
+               groom_stm_baseline = function(x) paste("Stimulus =", x)
+             )) +
+  labs(y = "Equilibrium value", x = "Resources") + 
+  theme_classic()
+# plot it 
+eq_plot_subset # all looks good 
+```
+
+```{r check stability}
+library(deSolve)
+
+# build it deterministically
+ecto_ode <- function(t, state, parms) {
+  x <- state["x"]
+  dx <- net_growth(x, parms)
+  list(c(dx))
+}
+
+# stability 
+check_stability <- function(root_val, row.params, eps = 0.01, tmax = 500) {
+  
+  times <- seq(0, tmax, by = 1)
+  
+  out_below <- ode(
+    y = c(x = root_val - eps),
+    times = times,
+    func = ecto_ode,
+    parms = row.params
+  )
+  
+  out_above <- ode(
+    y = c(x = root_val + eps),
+    times = times,
+    func = ecto_ode,
+    parms = row.params
+  )
+  
+  end_below <- tail(out_below[, "x"], 1)
+  end_above <- tail(out_above[, "x"], 1)
+  
+  tol <- 0.05
+  
+  if (abs(end_below - root_val) < tol && abs(end_above - root_val) < tol) {
+    stability <- "stable"
+  } else if (abs(end_below - root_val) >= tol && abs(end_above - root_val) >= tol) {
+    stability <- "unstable"
+  } else {
+    stability <- "semi/unclear"
+  }
+  
+  list(
+    stability = stability,
+    out_below = out_below,
+    out_above = out_above
+  )
+}
+
+row.params <- as.list(subset_params[1, ])
+root_val <- roots_long$root[1]
+
+res <- check_stability(root_val, row.params)
+
+res$stability
+
+plot(res$out_below[, "time"], res$out_below[, "x"], type = "l",
+     ylim = range(c(res$out_below[, "x"], res$out_above[, "x"])),
+     xlab = "Time", ylab = "Parasite burden")
+lines(res$out_above[, "time"], res$out_above[, "x"], lty = 2)
+abline(h = root_val, col = "red")
+
+# apply to all 
+roots_long$stability_desolve <- mapply(
+  function(r, id) {
+    row.params <- as.list(subset_params[id, ])
+    check_stability(r, row.params)$stability
+  },
+  roots_long$root,
+  roots_long$param_id
+)
+
+# plot with stability
+eq_plot_subset_ws <- ggplot(roots_long, 
+                         aes(y = root, x = scenario, color = stability_desolve)) +
+  geom_point(size = 1) +
+  facet_grid(groom_prg_baseline ~ groom_stm_baseline,
+             scales = "free_y",
+             labeller = labeller(
+               groom_prg_baseline = function(x) paste("Programmed =", x),
+               groom_stm_baseline = function(x) paste("Stimulus =", x)
+             )) +
+  labs(y = "Equilibrium value", x = "Resources", 
+       color = "Stability") + 
+  theme_classic()
+# plot it 
+eq_plot_subset_ws # all looks good 
+
+# Save the plot 
+png(filename="figures/eq_t8_bli5_ri2_ps-combo.png", width = 7.5, height =3, unit = 'in', res = 300)
+eq_plot_subset_ws
+dev.off()
+```
+
+
